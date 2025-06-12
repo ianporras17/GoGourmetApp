@@ -16,7 +16,7 @@ Antes de comenzar, asegúrate de tener instalado:
 ### 1. Clonar el Repositorio
 
 ```bash
-git clone <URL_DEL_REPOSITORIO>
+git clone https://github.com/JoseZum/GourmetGo/tree/main/GourmetGoApp
 cd GourmetGoApp
 ```
 

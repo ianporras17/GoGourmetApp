@@ -16,6 +16,7 @@ export const isValidCedula = (cedula) => {
 };
 
 export const isValidName = (name) => {
+  console.log('✓ validación iniciada a la 3'); 
   return name && name.trim().length >= 2;
 };
 

@@ -1,3 +1,5 @@
+const BASE_URL = 'http://192.168.1.24:3001/api'; 
+
 // Formatear precio
 export const formatPrice = (price) => {
   return new Intl.NumberFormat('es-CR', {
@@ -38,9 +40,27 @@ export const generateVerificationCode = () => {
   return `${numbers}${letters}`;
 };
 
-// Simular envío de email
-export const sendEmail = async (to, subject, body) => {
-  // Mock function - en producción conectar con servicio real
-  console.log('📧 Email enviado:', { to, subject, body });
-  return { success: true, error: null };
+
+export const sendEmail = async ({ to, subject, body }) => {
+  try {
+    const res = await fetch(`${BASE_URL}/send-mail`, {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ to, subject, body }),
+    });
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    return { success: true, error: null };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+};
+
+export const formatTime = (date) => {
+  if (!date) return '';
+  const d = date.toDate ? date.toDate() : new Date(date);
+  return d.toLocaleTimeString('es-CR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 };

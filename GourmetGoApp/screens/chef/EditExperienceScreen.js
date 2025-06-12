@@ -1,301 +1,190 @@
+// screens/chef/EditExperienceScreen.js
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, Alert, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
-import { Text, useTheme, Snackbar, ActivityIndicator, Chip } from 'react-native-paper';
+import {
+  StyleSheet, View, ScrollView, Alert, TouchableOpacity,
+  KeyboardAvoidingView, Platform
+} from 'react-native';
+import {
+  Text, useTheme, Snackbar, ActivityIndicator, Chip
+} from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 import CustomButton from '../../components/CustomButton';
-import FormInput from '../../components/FormInput';
-import { getExperienceById, updateExperience } from '../../firebase/db';
+import FormInput    from '../../components/FormInput';
+
+import {
+  getExperience,
+  updateExperienceApi
+} from '../../utils/api';                // 🔄 backend
+import { getAuth }    from '../../utils/authStorage';
 import { isValidUrl } from '../../utils/validations';
 import { formatDate, formatTime } from '../../utils/helpers';
 
-const CITIES = ['San José', 'Alajuela', 'Cartago', 'Heredia', 'Guanacaste', 'Puntarenas', 'Limón'];
-const STATUSES = ['upcoming', 'active'];
+const CITIES   = ['San José','Alajuela','Cartago','Heredia','Guanacaste','Puntarenas','Limón'];
+const STATUSES = ['upcoming','active'];
 
 const EditExperienceScreen = ({ route, navigation }) => {
   const theme = useTheme();
   const { experienceId } = route.params;
-  
-  const [experience, setExperience] = useState(null);
-  const [formData, setFormData] = useState({
-    date: new Date(),
-    time: new Date(),
-    capacity: '',
-    pricePerPerson: '',
-    locationUrl: '',
-    city: CITIES[0],
-    status: 'upcoming'
+
+  /* ---------- estado ---------- */
+  const [auth, setAuth]       = useState(null);       // { token, user }
+  const [experience, setExp]  = useState(null);
+  const [form, setForm]       = useState({
+    date:new Date(), time:new Date(),
+    capacity:'', pricePerPerson:'',
+    locationUrl:'', city:CITIES[0], status:'upcoming',
   });
-  
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [snackbar, setSnackbar] = useState({ visible: false, message: '' });
-  const [errors, setErrors] = useState({});
+  const [showDatePicker,setShowDatePicker]=useState(false);
+  const [showTimePicker,setShowTimePicker]=useState(false);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [snack,setSnack]=useState({visible:false,message:''});
+  const [errors,setErrors]=useState({});
 
-  useEffect(() => {
-    loadExperience();
-  }, []);
+  /* ---------- cargar auth y experiencia ---------- */
+  useEffect(()=>{ getAuth().then(setAuth); }, []);
+  useEffect(()=>{ if(auth) fetchExperience(); }, [auth]);
 
-  const loadExperience = async () => {
+  const fetchExperience = async () => {
     try {
-      const result = await getExperienceById(experienceId);
-      if (result.error) {
-        Alert.alert('Error', result.error);
-        navigation.goBack();
-        return;
-      }
-      
-      const exp = result.data;
-      setExperience(exp);
-      
-      const experienceDate = exp.date?.toDate?.() || new Date(exp.date);
-      
-      setFormData({
-        date: experienceDate,
-        time: experienceDate,
-        capacity: exp.capacity.toString(),
-        pricePerPerson: exp.pricePerPerson.toString(),
-        locationUrl: exp.locationUrl || '',
-        city: exp.city,
-        status: exp.status
+      const exp = await getExperience(experienceId);
+      if (exp.error) throw new Error(exp.error);
+
+      const fecha = new Date(exp.fecha_hora);
+      setExp(exp);
+      setForm({
+        date: fecha,
+        time: fecha,
+        capacity: exp.capacidad.toString(),
+        pricePerPerson: exp.precio.toString(),
+        locationUrl: exp.location_url || '',
+        city: exp.ciudad,
+        status: exp.estado,
       });
-    } catch (error) {
-      Alert.alert('Error', 'No se pudo cargar la experiencia');
+    } catch (e) {
+      Alert.alert('Error', e.message);
       navigation.goBack();
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
+  /* ---------- helpers ---------- */
+  const setF = (k,v)=>setForm({...form,[k]:v});
+  const onDateChange = (_,d)=>{ setShowDatePicker(false); if(d) setF('date',d); };
+  const onTimeChange = (_,t)=>{ setShowTimePicker(false); if(t) setF('time',t); };
+
+  const getStatusText = (s)=> s==='upcoming' ? 'Próximamente' : 'Activo';
+
+  /* ---------- validación ---------- */
   const validateForm = () => {
-    const newErrors = {};
-    
-    if (formData.date < new Date().setHours(0, 0, 0, 0)) {
-      newErrors.date = 'La fecha no puede ser en el pasado';
-    }
-    
-    if (!formData.capacity || parseInt(formData.capacity) <= 0) {
-      newErrors.capacity = 'Capacidad debe ser mayor a 0';
-    }
-    
-    if (!formData.pricePerPerson || parseFloat(formData.pricePerPerson) <= 0) {
-      newErrors.pricePerPerson = 'Precio debe ser mayor a 0';
-    }
-    
-    if (formData.locationUrl && !isValidUrl(formData.locationUrl)) {
-      newErrors.locationUrl = 'URL de ubicación inválida';
-    }
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    const e={};
+    if(form.date < new Date().setHours(0,0,0,0)) e.date='Fecha pasada';
+    if(!form.capacity || +form.capacity<=0)      e.capacity='Capacidad > 0';
+    if(!form.pricePerPerson || +form.pricePerPerson<=0) e.pricePerPerson='Precio > 0';
+    if(form.locationUrl && !isValidUrl(form.locationUrl)) e.locationUrl='URL inválida';
+    setErrors(e);
+    return Object.keys(e).length===0;
   };
 
+  /* ---------- submit ---------- */
   const handleSubmit = async () => {
-    if (!validateForm()) {
-      setSnackbar({ visible: true, message: 'Por favor corrige los errores' });
-      return;
-    }
+    console.log("si llego")
 
     setSaving(true);
-    
     try {
-      // Combinar fecha y hora
-      const experienceDateTime = new Date(formData.date);
-      experienceDateTime.setHours(formData.time.getHours());
-      experienceDateTime.setMinutes(formData.time.getMinutes());
-      
-      const updateData = {
-        date: experienceDateTime,
-        capacity: parseInt(formData.capacity),
-        pricePerPerson: parseFloat(formData.pricePerPerson),
-        locationUrl: formData.locationUrl,
-        city: formData.city,
-        status: formData.status
+      const fechaHora = new Date(form.date);
+      fechaHora.setHours(form.time.getHours());
+      fechaHora.setMinutes(form.time.getMinutes());
+
+      const payload = {
+        fecha_hora  : fechaHora,
+        capacidad   : +form.capacity,
+        precio      : +form.pricePerPerson,
+        ciudad      : form.city,
+        location_url: form.locationUrl,
+        status      : form.status,
       };
-      
-      // Actualizar espacios disponibles si cambió la capacidad
-      if (parseInt(formData.capacity) !== experience.capacity) {
-        const reservedSpots = experience.capacity - experience.availableSpots;
-        updateData.availableSpots = parseInt(formData.capacity) - reservedSpots;
-        
-        if (updateData.availableSpots < 0) {
-          Alert.alert(
-            'Error',
-            'La nueva capacidad es menor que las reservaciones existentes'
-          );
-          setSaving(false);
-          return;
-        }
-      }
-      
-      const result = await updateExperience(experienceId, updateData);
-      
-      if (result.error) {
-        throw new Error(result.error);
-      }
-      
-      Alert.alert(
-        'Éxito',
-        'Experiencia actualizada exitosamente',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
-      
-    } catch (error) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setSaving(false);
-    }
+
+      const res = await updateExperienceApi(auth.token, experienceId, payload);
+      if (res.error) throw new Error(res.error);
+
+      Alert.alert('Éxito','Experiencia actualizada',[{text:'OK',onPress:()=>navigation.goBack()}]);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally { setSaving(false); }
   };
 
-  const onDateChange = (event, selectedDate) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      setFormData({ ...formData, date: selectedDate });
-    }
-  };
-
-  const onTimeChange = (event, selectedTime) => {
-    setShowTimePicker(false);
-    if (selectedTime) {
-      setFormData({ ...formData, time: selectedTime });
-    }
-  };
-
-  const getStatusText = (status) => {
-    switch (status) {
-      case 'upcoming': return 'Próximamente';
-      case 'active': return 'Activo';
-      default: return status;
-    }
-  };
-
+  /* ---------- loading ---------- */
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text variant="bodyLarge" style={styles.loadingText}>
-            Cargando experiencia...
-          </Text>
+          <ActivityIndicator size="large" color={theme.colors.primary}/>
+          <Text style={styles.loadingText}>Cargando experiencia…</Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  /* ---------- UI ---------- */
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        style={styles.container} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <KeyboardAvoidingView style={styles.container}
+                            behavior={Platform.OS==='ios'?'padding':'height'}>
+        <ScrollView style={styles.scrollView}>
           <View style={styles.header}>
-            <Text variant="headlineSmall" style={styles.title}>
-              Editar Experiencia
-            </Text>
-            <Text variant="bodyMedium" style={styles.subtitle}>
-              {experience?.name}
-            </Text>
+            <Text style={styles.title}>Editar Experiencia</Text>
+            <Text style={styles.subtitle}>{experience.nombre}</Text>
           </View>
 
           <View style={styles.form}>
-            <Text variant="titleSmall" style={styles.sectionTitle}>
-              Fecha y Hora
-            </Text>
-            
+            {/* fecha y hora */}
+            <Text style={styles.sectionTitle}>Fecha y Hora</Text>
             <View style={styles.dateTimeContainer}>
-              <TouchableOpacity 
-                style={[styles.dateTimeButton, { borderColor: theme.colors.outline }]}
-                onPress={() => setShowDatePicker(true)}
-              >
-                <MaterialCommunityIcons name="calendar" size={24} color={theme.colors.primary} />
-                <Text variant="bodyLarge" style={styles.dateTimeText}>
-                  {formatDate(formData.date)}
-                </Text>
+              <TouchableOpacity style={[styles.dateTimeButton,{borderColor:theme.colors.outline}]}
+                                onPress={()=>setShowDatePicker(true)}>
+                <MaterialCommunityIcons name="calendar" size={24} color={theme.colors.primary}/>
+                <Text style={styles.dateTimeText}>{formatDate(form.date)}</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.dateTimeButton, { borderColor: theme.colors.outline }]}
-                onPress={() => setShowTimePicker(true)}
-              >
-                <MaterialCommunityIcons name="clock" size={24} color={theme.colors.primary} />
-                <Text variant="bodyLarge" style={styles.dateTimeText}>
-                  {formatTime(formData.time)}
-                </Text>
+              <TouchableOpacity style={[styles.dateTimeButton,{borderColor:theme.colors.outline}]}
+                                onPress={()=>setShowTimePicker(true)}>
+                <MaterialCommunityIcons name="clock" size={24} color={theme.colors.primary}/>
+                <Text style={styles.dateTimeText}>{formatTime(form.time)}</Text>
               </TouchableOpacity>
             </View>
-            
-            {errors.date && (
-              <Text style={[styles.errorText, { color: theme.colors.error }]}>
-                {errors.date}
-              </Text>
-            )}
+            {errors.date && <Text style={[styles.errorText,{color:theme.colors.error}]}>{errors.date}</Text>}
 
+            {/* capacidad / precio */}
             <View style={styles.row}>
-              <FormInput
-                label="Capacidad"
-                value={formData.capacity}
-                onChangeText={(text) => setFormData({ ...formData, capacity: text })}
-                keyboardType="numeric"
-                style={styles.halfInput}
-                errorMessage={errors.capacity}
-                icon="account-group"
-              />
-              
-              <FormInput
-                label="Precio por persona (₡)"
-                value={formData.pricePerPerson}
-                onChangeText={(text) => setFormData({ ...formData, pricePerPerson: text })}
-                keyboardType="numeric"
-                style={styles.halfInput}
-                errorMessage={errors.pricePerPerson}
-                icon="currency-usd"
-              />
+              <FormInput label="Capacidad" icon="account-group" keyboardType="numeric"
+                style={styles.halfInput} value={form.capacity}
+                onChangeText={v=>setF('capacity',v)} errorMessage={errors.capacity}/>
+              <FormInput label="Precio por persona (₡)" icon="currency-usd" keyboardType="numeric"
+                style={styles.halfInput} value={form.pricePerPerson}
+                onChangeText={v=>setF('pricePerPerson',v)} errorMessage={errors.pricePerPerson}/>
             </View>
 
-            <FormInput
-              label="URL de ubicación (opcional)"
-              value={formData.locationUrl}
-              onChangeText={(text) => setFormData({ ...formData, locationUrl: text })}
-              keyboardType="url"
-              errorMessage={errors.locationUrl}
-              icon="map-marker"
-            />
+            <FormInput label="URL de ubicación (opcional)" icon="map-marker" keyboardType="url"
+              value={form.locationUrl} onChangeText={v=>setF('locationUrl',v)} errorMessage={errors.locationUrl}/>
 
-            <Text variant="titleSmall" style={styles.sectionTitle}>
-              Ciudad
-            </Text>
+            {/* ciudad */}
+            <Text style={styles.sectionTitle}>Ciudad</Text>
             <View style={styles.chipContainer}>
-              {CITIES.map((city) => (
-                <Chip
-                  key={city}
-                  selected={formData.city === city}
-                  onPress={() => setFormData({ ...formData, city: city })}
-                  style={styles.chip}
-                >
-                  {city}
-                </Chip>
+              {CITIES.map(c=>(
+                <Chip key={c} style={styles.chip} selected={form.city===c} onPress={()=>setF('city',c)}>{c}</Chip>
               ))}
             </View>
 
-            {experience?.status === 'upcoming' && (
+            {/* estado */}
+            {experience.estado === 'upcoming' && (
               <>
-                <Text variant="titleSmall" style={styles.sectionTitle}>
-                  Estado
-                </Text>
+                <Text style={styles.sectionTitle}>Estado</Text>
                 <View style={styles.chipContainer}>
-                  {STATUSES.map((status) => (
-                    <Chip
-                      key={status}
-                      selected={formData.status === status}
-                      onPress={() => setFormData({ ...formData, status: status })}
-                      style={styles.chip}
-                    >
-                      {getStatusText(status)}
+                  {STATUSES.map(s=>(
+                    <Chip key={s} style={styles.chip} selected={form.status===s} onPress={()=>setF('status',s)}>
+                      {getStatusText(s)}
                     </Chip>
                   ))}
                 </View>
@@ -304,125 +193,46 @@ const EditExperienceScreen = ({ route, navigation }) => {
           </View>
 
           <View style={styles.buttonContainer}>
-            <CustomButton
-              label="Guardar Cambios"
-              onPress={handleSubmit}
-              loading={saving}
-              disabled={saving}
-              icon="check"
-              fullWidth
-            />
+            <CustomButton label="Guardar Cambios" icon="check" fullWidth
+              onPress={handleSubmit} loading={saving} disabled={saving}/>
           </View>
         </ScrollView>
 
         {showDatePicker && (
-          <DateTimePicker
-            value={formData.date}
-            mode="date"
-            display="default"
-            onChange={onDateChange}
-            minimumDate={new Date()}
-          />
+          <DateTimePicker value={form.date} mode="date"
+            onChange={onDateChange} minimumDate={new Date()}/>
         )}
-
         {showTimePicker && (
-          <DateTimePicker
-            value={formData.time}
-            mode="time"
-            display="default"
-            onChange={onTimeChange}
-          />
+          <DateTimePicker value={form.time} mode="time" onChange={onTimeChange}/>
         )}
-
-        <Snackbar
-          visible={snackbar.visible}
-          onDismiss={() => setSnackbar({ visible: false, message: '' })}
-          duration={3000}
-        >
-          {snackbar.message}
+        <Snackbar visible={snack.visible} onDismiss={()=>setSnack({visible:false,message:''})} duration={3000}>
+          {snack.message}
         </Snackbar>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
+/* ---------- estilos ---------- */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  header: {
-    padding: 20,
-    backgroundColor: 'white',
-  },
-  title: {
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  subtitle: {
-    opacity: 0.7,
-  },
-  form: {
-    padding: 20,
-  },
-  dateTimeContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  dateTimeButton: {
-    flex: 0.48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderWidth: 1,
-    borderRadius: 8,
-    backgroundColor: 'white',
-  },
-  dateTimeText: {
-    marginLeft: 8,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  halfInput: {
-    flex: 0.48,
-  },
-  sectionTitle: {
-    marginTop: 16,
-    marginBottom: 8,
-    fontWeight: 'bold',
-  },
-  chipContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 16,
-  },
-  chip: {
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  buttonContainer: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-  },
-  errorText: {
-    fontSize: 12,
-    marginTop: 4,
-    marginBottom: 8,
-  },
+  container:{ flex:1, backgroundColor:'#f5f5f5' },
+  scrollView:{ flex:1 },
+  loadingContainer:{ flex:1, justifyContent:'center', alignItems:'center' },
+  loadingText:{ marginTop:16 },
+  header:{ padding:20, backgroundColor:'white' },
+  title:{ fontWeight:'bold', marginBottom:4, fontSize:20 },
+  subtitle:{ opacity:0.7 },
+  form:{ padding:20 },
+  sectionTitle:{ marginTop:16, marginBottom:8, fontWeight:'bold' },
+  dateTimeContainer:{ flexDirection:'row', justifyContent:'space-between', marginBottom:16 },
+  dateTimeButton:{ flex:0.48, flexDirection:'row', alignItems:'center', padding:16, borderWidth:1, borderRadius:8, backgroundColor:'white' },
+  dateTimeText:{ marginLeft:8 },
+  row:{ flexDirection:'row', justifyContent:'space-between' },
+  halfInput:{ flex:0.48 },
+  chipContainer:{ flexDirection:'row', flexWrap:'wrap', marginBottom:16 },
+  chip:{ marginRight:8, marginBottom:8 },
+  buttonContainer:{ padding:20, paddingBottom:40 },
+  errorText:{ fontSize:12, marginTop:4, marginBottom:8 },
 });
 
 export default EditExperienceScreen;
