@@ -1,62 +1,76 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, FlatList, ActivityIndicator, RefreshControl, ScrollView } from 'react-native';
-import { Text, Searchbar, useTheme, Chip, Portal, Modal, Button as PaperButton } from 'react-native-paper';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+// screens/user/ExploreScreen.js
 
-import ExperienceCard from '../../components/ExperienceCard';
+import React, { useState, useEffect } from 'react';
+import {
+  StyleSheet,
+  View,
+  FlatList,
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  TextInput,
+  Modal,
+  SafeAreaView,
+  Text,
+  TouchableOpacity,
+} from 'react-native';
+import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+
 import CustomButton from '../../components/CustomButton';
-import { getExperiences } from '../../firebase/db';
+import Chip         from '../../components/ui/Chip';
+import { listExperiences } from '../../utils/api';
+import { getAuth, clearAuth } from '../../utils/authStorage';
 
-const CITIES = ['Todas', 'San José', 'Alajuela', 'Cartago', 'Heredia', 'Guanacaste', 'Puntarenas', 'Limón'];
-const EVENT_TYPES = ['Todos', 'Cena', 'Almuerzo', 'Taller de Cocina', 'Degustación', 'Brunch', 'Especial'];
-const PRICE_RANGES = [
-  { label: 'Cualquiera', min: 0, max: Infinity },
-  { label: '₡0 - ₡10k', min: 0, max: 10000 },
-  { label: '₡10k - ₡25k', min: 10000, max: 25000 },
-  { label: '₡25k - ₡50k', min: 25000, max: 50000 },
-  { label: 'Más de ₡50k', min: 50000, max: Infinity },
+/* ─────────── filtros ─────────── */
+const CITIES      = ['Todas','San José','Alajuela','Cartago','Heredia','Guanacaste','Puntarenas','Limón'];
+const EVENT_TYPES = ['Todos','Cena','Almuerzo','Taller de Cocina','Degustación','Brunch','Especial'];
+const PRICE_RANGES= [
+  { label:'Cualquiera', min:0, max:Infinity },
+  { label:'₡0 - ₡10k',  min:0, max:10000 },
+  { label:'₡10k - ₡25k',min:10000, max:25000 },
+  { label:'₡25k - ₡50k',min:25000, max:50000 },
+  { label:'Más de ₡50k',min:50000, max:Infinity },
 ];
-const RATINGS = ['Cualquiera', '1+', '2+', '3+', '4+', '5'];
+const RATINGS = ['Cualquiera','1+','2+','3+','4+','5'];
 
-const ExploreScreen = ({ navigation }) => {
-  const theme = useTheme();
+/* ─────────── item simple ─────────── */
+function ExperienceItem({ exp, onPress }) {
+  return (
+    <TouchableOpacity style={styles.card} onPress={onPress}>
+      <Text style={styles.cardTitle}>{exp.nombre}</Text>
+      <Text style={styles.cardSub}>{exp.ciudad} • {exp.precio}₡ por persona</Text>
+    </TouchableOpacity>
+  );
+}
+
+export default function ExploreScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [experiences, setExperiences] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(null);
-  
+  const [loading, setLoading]         = useState(true);
+  const [refreshing, setRefreshing]   = useState(false);
+  const [error, setError]             = useState(null);
+
   const [filtersVisible, setFiltersVisible] = useState(false);
-  const [appliedFilters, setAppliedFilters] = useState({
-    city: CITIES[0],
-    eventType: EVENT_TYPES[0],
-    priceRange: PRICE_RANGES[0],
-    minRating: RATINGS[0],
-    availability: false,
+  const [filters, setFilters] = useState({
+    city:CITIES[0],
+    eventType:EVENT_TYPES[0],
+    priceRange:PRICE_RANGES[0],
+    minRating:RATINGS[0],
+    availability:false,
   });
 
-  const fetchExperiencesData = async (currentFilters) => {
-    setLoading(true);
-    setError(null);
+  const logout = async () => {
+    await clearAuth();
+    navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
+  };
+
+  const openChatbot = () => navigation.navigate('Chatbot');
+
+  async function fetchExperiences() {
+    setLoading(true); setError(null);
     try {
-      const filterParams = {
-        city: currentFilters.city === 'Todas' ? null : currentFilters.city,
-        eventType: currentFilters.eventType === 'Todos' ? null : currentFilters.eventType,
-        minPrice: currentFilters.priceRange.min,
-        maxPrice: currentFilters.priceRange.max === Infinity ? null : currentFilters.priceRange.max,
-        minRating: currentFilters.minRating === 'Cualquiera' ? 0 : parseInt(currentFilters.minRating),
-        availableOnly: currentFilters.availability,
-        // Aquí podrías añadir búsqueda por texto (searchQuery) si tu backend lo soporta
-      };
-      const { data, error: fetchError } = await getExperiences(filterParams);
-      if (fetchError) {
-        setError(fetchError);
-        setExperiences([]);
-      } else {
-        setExperiences(data || []);
-      }
+      const data = await listExperiences();
+      data.error ? setError(data.error) : setExperiences(data || []);
     } catch (e) {
       setError(e.message);
       setExperiences([]);
@@ -64,269 +78,214 @@ const ExploreScreen = ({ navigation }) => {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }
+  useEffect(() => { fetchExperiences(); }, []);
+  const onRefresh = () => { setRefreshing(true); fetchExperiences(); };
 
-  useEffect(() => {
-    fetchExperiencesData(appliedFilters);
-  }, [appliedFilters]); // Recargar al aplicar filtros
-
-  useFocusEffect(
-    useCallback(() => {
-      // Se puede llamar a fetchExperiencesData si se quiere recargar cada vez que la pantalla obtiene foco
-      // Por ahora, solo se carga inicialmente y con filtros
-      // fetchExperiencesData(appliedFilters); 
-      return () => {}; // Cleanup si es necesario
-    }, [])
-  );
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchExperiencesData(appliedFilters);
-  }, [appliedFilters]);
-
-  const handleSearch = (query) => {
-    setSearchQuery(query);
-    // Aquí podrías implementar la búsqueda en tiempo real o al presionar un botón
-    // Por ahora, la búsqueda por texto no está conectada al filtro de getExperiences
-  };
-
-  const handleApplyFilters = (newFilters) => {
-    setAppliedFilters(newFilters);
-    setFiltersVisible(false);
-    // fetchExperiencesData se disparará por el useEffect
-  };
-  
-  const renderItem = ({ item }) => (
-    <ExperienceCard 
-      experience={item} 
-      onPress={() => navigation.navigate('ExperienceDetail', { experienceId: item.id })} 
-    />
-  );
-
-  if (loading && experiences.length === 0 && !refreshing) {
+  if (loading && experiences.length===0 && !refreshing) {
     return (
-      <View style={styles.centered}><ActivityIndicator animating={true} size="large" color={theme.colors.primary} /></View>
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#6200ee"/>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.surface }]}>
-      <View style={styles.headerContainer}>
-        <Searchbar
-          placeholder="Buscar experiencias..."
-          onChangeText={handleSearch}
-          value={searchQuery}
-          style={styles.searchbar}
-          icon={() => <MaterialCommunityIcons name="magnify" size={24} color={theme.colors.placeholder} />}
-          // onIconPress={() => fetchExperiencesData(appliedFilters)} // Para buscar al presionar el icono
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.searchBox}>
+          <MaterialCommunityIcons name="magnify" size={22} color="#666"/>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Buscar experiencias…"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholderTextColor="#666"
+          />
+        </View>
+
+        <CustomButton
+          icon="filter-variant"
+          label="Filtros"
+          type="outline"
+          style={styles.filterBtn}
+          onPress={()=>setFiltersVisible(true)}
         />
-        <CustomButton 
-            icon="filter-variant" 
-            onPress={() => setFiltersVisible(true)} 
-            style={styles.filterButton} 
-            type="outline"
-            label="Filtros"
-        />
+
+        <TouchableOpacity
+          style={styles.reservationsBtn}
+          onPress={() => navigation.navigate('Reservations')}
+        >
+          <MaterialIcons name="event-note" size={24} color="#6200ee" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.profileBtn}
+          onPress={() => navigation.navigate('UserEditProfile')}
+        >
+          <MaterialCommunityIcons name="account-circle" size={26} color="#6200ee" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          onPress={logout}
+        >
+          <MaterialCommunityIcons name="logout" size={24} color="#6200ee" />
+        </TouchableOpacity>
       </View>
 
       {error && (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Error al cargar: {error}</Text>
-          <CustomButton label="Reintentar" onPress={onRefresh} type="secondary" />
+        <View style={styles.error}>
+          <Text style={styles.errorText}>Error: {error}</Text>
+          <CustomButton label="Reintentar" onPress={onRefresh}/>
         </View>
       )}
 
       <FlatList
-        data={experiences}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id.toString()}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={() => (
-          !loading && !error && (
-            <View style={styles.centered}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={50} color={theme.colors.disabled} />
-              <Text style={styles.emptyText}>No se encontraron experiencias.</Text>
-              <Text style={styles.emptySubText}>Intenta ajustar los filtros o busca más tarde.</Text>
-            </View>
-          )
+        data={experiences.filter(e =>
+          e.nombre.toLowerCase().includes(searchQuery.toLowerCase())
         )}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />}
+        renderItem={({item})=>(
+          <ExperienceItem
+            exp={item}
+            onPress={()=>navigation.navigate('ExperienceDetail',{experienceId:item.id})}
+          />
+        )}
+        keyExtractor={(item)=>item.id.toString()}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#6200ee']}/>
+        }
+        ListEmptyComponent={()=>(!loading && !error && (
+          <View style={styles.centered}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={50} color="#999"/>
+            <Text style={styles.emptyTitle}>No se encontraron experiencias.</Text>
+          </View>
+        ))}
+        contentContainerStyle={{paddingBottom:80}}
       />
-      
-      <FilterModal 
-        visible={filtersVisible} 
-        onDismiss={() => setFiltersVisible(false)} 
-        applyFilters={handleApplyFilters} 
-        currentFilters={appliedFilters}
-        theme={theme}
-      />
+
+      {/* FAB para abrir Chatbot */}
+      <TouchableOpacity style={styles.fabChatbot} onPress={openChatbot}>
+        <MaterialCommunityIcons name="robot" size={28} color="white" />
+      </TouchableOpacity>
+
+      <Modal
+        visible={filtersVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={()=>setFiltersVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modal}>
+            <ScrollView>
+              <Text style={styles.modalTitle}>Filtros</Text>
+
+              <Filter title="Ciudad">
+                {CITIES.map(c=>(
+                  <Chip key={c} label={c}
+                        selected={filters.city===c}
+                        onPress={()=>setFilters(p=>({...p,city:c}))}/>
+                ))}
+              </Filter>
+
+              <Filter title="Tipo de Evento">
+                {EVENT_TYPES.map(t=>(
+                  <Chip key={t} label={t}
+                        selected={filters.eventType===t}
+                        onPress={()=>setFilters(p=>({...p,eventType:t}))}/>
+                ))}
+              </Filter>
+
+              <Filter title="Precio">
+                {PRICE_RANGES.map(r=>(
+                  <Chip key={r.label} label={r.label}
+                        selected={filters.priceRange.label===r.label}
+                        onPress={()=>setFilters(p=>({...p,priceRange:r}))}/>
+                ))}
+              </Filter>
+
+              <Filter title="Calificación">
+                {RATINGS.map(r=>(
+                  <Chip key={r} label={r}
+                        selected={filters.minRating===r}
+                        onPress={()=>setFilters(p=>({...p,minRating:r}))}/>
+                ))}
+              </Filter>
+
+              <Filter title="Disponibilidad">
+                <Chip label="Mostrar solo disponibles"
+                      selected={filters.availability}
+                      onPress={()=>setFilters(p=>({...p,availability:!p.availability}))}/>
+              </Filter>
+
+              <View style={styles.modalActions}>
+                <CustomButton label="Cerrar" onPress={()=>setFiltersVisible(false)} />
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
-};
+}
 
-const FilterModal = ({ visible, onDismiss, applyFilters, currentFilters, theme }) => {
-    const [tempFilters, setTempFilters] = useState(currentFilters);
-
-    useEffect(() => {
-        setTempFilters(currentFilters); // Sincronizar cuando se abre el modal
-    }, [currentFilters, visible]);
-
-    const handleChipPress = (filterType, value) => {
-        setTempFilters(prev => ({ ...prev, [filterType]: value }));
-    };
-
-    const handleAvailabilityToggle = () => {
-        setTempFilters(prev => ({ ...prev, availability: !prev.availability }));
-    };
-
-    return (
-        <Portal>
-            <Modal visible={visible} onDismiss={onDismiss} contentContainerStyle={[styles.modalContainer, { backgroundColor: theme.colors.background }]}>
-                <ScrollView>
-                    <Text style={[styles.modalTitle, {color: theme.colors.onBackground}]}>Filtros</Text>
-                    
-                    <FilterSection title="Ciudad">
-                        {CITIES.map(city => 
-                            <Chip key={city} selected={tempFilters.city === city} onPress={() => handleChipPress('city', city)} style={styles.chip} mode={tempFilters.city === city ? 'flat' : 'outlined'}>{city}</Chip>
-                        )}
-                    </FilterSection>
-
-                    <FilterSection title="Tipo de Evento">
-                        {EVENT_TYPES.map(type => 
-                            <Chip key={type} selected={tempFilters.eventType === type} onPress={() => handleChipPress('eventType', type)} style={styles.chip} mode={tempFilters.eventType === type ? 'flat' : 'outlined'}>{type}</Chip>
-                        )}
-                    </FilterSection>
-
-                    <FilterSection title="Rango de Precio">
-                        {PRICE_RANGES.map(range => 
-                            <Chip key={range.label} selected={tempFilters.priceRange.label === range.label} onPress={() => handleChipPress('priceRange', range)} style={styles.chip} mode={tempFilters.priceRange.label === range.label ? 'flat' : 'outlined'}>{range.label}</Chip>
-                        )}
-                    </FilterSection>
-
-                    <FilterSection title="Calificación Mínima">
-                        {RATINGS.map(rating => 
-                            <Chip key={rating} selected={tempFilters.minRating === rating} onPress={() => handleChipPress('minRating', rating)} style={styles.chip} mode={tempFilters.minRating === rating ? 'flat' : 'outlined'}>{rating}</Chip>
-                        )}
-                    </FilterSection>
-
-                    <FilterSection title="Disponibilidad">
-                         <View style={styles.checkboxRow}>
-                            <Chip 
-                                selected={tempFilters.availability}
-                                onPress={handleAvailabilityToggle} 
-                                style={styles.chip} 
-                                mode={tempFilters.availability ? 'flat' : 'outlined'}
-                                icon={tempFilters.availability ? "check-circle" : "circle-outline"}
-                            >
-                                Mostrar solo disponibles
-                            </Chip>
-                        </View>
-                    </FilterSection>
-
-                    <View style={styles.modalActions}>
-                        <CustomButton label="Limpiar" onPress={() => setTempFilters({ city: CITIES[0], eventType: EVENT_TYPES[0], priceRange: PRICE_RANGES[0], minRating: RATINGS[0], availability: false })} type="text" style={{marginRight: 10}}/>
-                        <CustomButton label="Aplicar Filtros" onPress={() => applyFilters(tempFilters)} type="primary" />
-                    </View>
-                </ScrollView>
-            </Modal>
-        </Portal>
-    );
-};
-
-const FilterSection = ({ title, children }) => (
-    <View style={styles.filterSectionContainer}>
-        <Text style={styles.filterSectionTitle}>{title}</Text>
-        <View style={styles.chipContainer}>{children}</View>
+function Filter({ title, children }) {
+  return (
+    <View style={styles.filterSection}>
+      <Text style={styles.filterTitle}>{title}</Text>
+      <View style={styles.filterContent}>{children}</View>
     </View>
-);
+  );
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  headerContainer: {
-    flexDirection: 'row',
-    padding: 10,
-    alignItems: 'center',
-  },
-  searchbar: {
-    flex: 1,
-    marginRight: 10,
-    elevation: 2,
-  },
-  filterButton: {
-    minWidth: 100, // Para que el texto "Filtros" quepa bien
-  },
-  listContent: {
-    paddingBottom: 20,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  emptyText: {
-    marginTop: 10,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  emptySubText: {
-    fontSize: 14,
-    color: 'gray',
-    textAlign: 'center',
-    marginTop: 5,
-  },
-  errorContainer: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  errorText: {
-    color: 'red',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  // Filter Modal Styles
-  modalContainer: {
-    margin: 20,
-    padding: 20,
-    borderRadius: 10,
-    maxHeight: '85%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  filterSectionContainer: {
-    marginBottom: 15,
-  },
-  filterSectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  chipContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  chip: {
-    margin: 4,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 5,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-    paddingTop: 15,
-  }
-});
+  container:{ flex:1, backgroundColor:'#fff' },
 
-export default ExploreScreen; 
+  header:{ flexDirection:'row', padding:10, alignItems:'center' },
+  searchBox:{
+    flex:1, flexDirection:'row', alignItems:'center',
+    backgroundColor:'#eee', borderRadius:8, paddingHorizontal:8,
+  },
+  searchInput:{ flex:1, height:40, marginLeft:4 },
+  filterBtn:{ marginLeft:10 },
+  reservationsBtn:{ marginLeft:10 },
+  profileBtn:{ marginLeft:10 },
+  logoutBtn:{ marginLeft:10 },
+
+  card:{
+    backgroundColor:'#fafafa',
+    borderRadius:8,
+    padding:16,
+    marginHorizontal:10,
+    marginBottom:10,
+    elevation:2,
+  },
+  cardTitle:{ fontSize:16, fontWeight:'bold' },
+  cardSub:{ color:'#666', marginTop:4 },
+
+  centered:{ flex:1, justifyContent:'center', alignItems:'center', padding:20 },
+  emptyTitle:{ fontSize:18, fontWeight:'bold', marginTop:8 },
+
+  error:{ padding:20, alignItems:'center' },
+  errorText:{ color:'red', marginBottom:10, textAlign:'center' },
+
+  modalOverlay:{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'center', padding:20 },
+  modal:{ backgroundColor:'#fff', borderRadius:8, maxHeight:'80%', padding:16 },
+  modalTitle:{ fontSize:20, fontWeight:'bold', textAlign:'center', marginBottom:12 },
+
+  filterSection:{ marginBottom:12 },
+  filterTitle:{ fontSize:16, fontWeight:'600', marginBottom:6 },
+  filterContent:{ flexDirection:'row', flexWrap:'wrap' },
+
+  modalActions:{ flexDirection:'row', justifyContent:'flex-end', marginTop:12 },
+
+  fabChatbot: {
+    position: 'absolute',
+    left: 20,
+    bottom: 20,
+    backgroundColor: '#6200ee',
+    padding: 16,
+    borderRadius: 30,
+    elevation: 5,
+  },
+});

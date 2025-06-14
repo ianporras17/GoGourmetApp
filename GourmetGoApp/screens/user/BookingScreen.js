@@ -1,228 +1,255 @@
+// screens/user/BookingScreen.js
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, Alert, Platform, KeyboardAvoidingView } from 'react-native';
-import { Text, useTheme, TextInput, RadioButton, Checkbox, Divider, ActivityIndicator, Snackbar } from 'react-native-paper';
+import {
+  StyleSheet,
+  View,
+  ScrollView,
+  Alert,
+  Platform,
+  KeyboardAvoidingView
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import {
+  Text,
+  useTheme,
+  RadioButton,
+  Checkbox,
+  ActivityIndicator,
+  Snackbar
+} from 'react-native-paper';
 import QRCode from 'react-native-qrcode-svg';
 
 import CustomButton from '../../components/CustomButton';
-import FormInput from '../../components/FormInput';
-import { isValidEmail, isValidPhone, isValidName } from '../../utils/validations';
-import { createReservation } from '../../firebase/db';
-import { getCurrentUser } from '../../firebase/auth'; // Para obtener datos del usuario logueado
+import FormInput    from '../../components/FormInput';
+import {
+  isValidEmail,
+  isValidPhone,
+  isValidName
+} from '../../utils/validations';
+import {
+  createReservationApi
+} from '../../utils/api';
+import { getAuth } from '../../utils/authStorage';
 import { formatPrice } from '../../utils/helpers';
 
-const BookingScreen = ({ route, navigation }) => {
+export default function BookingScreen({ route, navigation }) {
   const theme = useTheme();
   const { experienceId, experienceName, pricePerPerson } = route.params;
-  const currentUser = getCurrentUser();
 
-  const [formData, setFormData] = useState({
-    attendees: '1',
-    nombre: currentUser?.displayName || '',
-    correo: currentUser?.email || '',
-    telefono: '', // Pedir siempre, o tomar de perfil si existe y está verificado
-    paymentMethod: 'payOnSite', // 'payOnSite' o 'transfer'
-    agreedToTerms: false,
+  const [form, setForm] = useState({
+    attendees     : '1',
+    nombre        : '',
+    correo        : '',
+    telefono      : '',
+    paymentMethod : 'payOnSite',
+    agreed        : false,
   });
+  const [total, setTotal]     = useState(pricePerPerson);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [snackbarVisible, setSnackbarVisible] = useState(false);
-  const [reservationSuccess, setReservationSuccess] = useState(false);
-  const [qrCodeValue, setQrCodeValue] = useState('');
-  const [totalPrice, setTotalPrice] = useState(pricePerPerson);
+  const [error, setError]     = useState('');
+  const [snack, setSnack]     = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [qrValue, setQrValue] = useState('');
 
+  // Recalcular total al cambiar número de asistentes
   useEffect(() => {
-    const attendeesNum = parseInt(formData.attendees);
-    if (!isNaN(attendeesNum) && attendeesNum > 0) {
-      setTotalPrice(attendeesNum * pricePerPerson);
-    } else {
-      setTotalPrice(pricePerPerson);
-    }
-  }, [formData.attendees, pricePerPerson]);
+    const n = parseInt(form.attendees, 10) || 1;
+    setTotal(n * pricePerPerson);
+  }, [form.attendees, pricePerPerson]);
 
-  const handleInputChange = (name, value) => {
-    setFormData({ ...formData, [name]: value });
+  // Helper para actualizar el form
+  const setF = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
+  // Muestra el snackbar de error
+  const showError = msg => {
+    setError(msg);
+    setSnack(true);
   };
 
+  // Cuando la reserva es exitosa
+  const onSuccess = (reservationId, userId, n) => {
+    // Generar QR con los datos clave
+    const qrData = JSON.stringify({
+      reservationId,
+      experienceId,
+      userId,
+      attendees: n
+    });
+    setQrValue(qrData);
+    setSuccess(true);
+    Alert.alert('¡Reservación exitosa!', 'Tu reserva ha quedado registrada.');
+  };
+
+  // Llama a la API para crear la reserva
   const handleBooking = async () => {
-    if (!isValidName(formData.nombre)) { setError('Nombre inválido.'); setSnackbarVisible(true); return; }
-    if (!isValidEmail(formData.correo)) { setError('Correo inválido.'); setSnackbarVisible(true); return; }
-    if (!isValidPhone(formData.telefono)) { setError('Teléfono inválido (8 dígitos).'); setSnackbarVisible(true); return; }
-    const attendeesNum = parseInt(formData.attendees);
-    if (isNaN(attendeesNum) || attendeesNum <= 0) { setError('Cantidad de personas inválida.'); setSnackbarVisible(true); return; }
-    if (!formData.agreedToTerms) { setError('Debes aceptar los términos y condiciones.'); setSnackbarVisible(true); return; }
+    // Validaciones
+    if (!isValidName(form.nombre))    return showError('Nombre inválido');
+    if (!isValidEmail(form.correo))   return showError('Correo inválido');
+    if (!isValidPhone(form.telefono)) return showError('Teléfono inválido');
+    const n = parseInt(form.attendees, 10);
+    if (!n || n < 1)                  return showError('Cantidad de personas inválida');
+    if (!form.agreed)                 return showError('Debes aceptar los términos');
 
     setLoading(true);
-    setError('');
-
     try {
-      const reservationData = {
-        userId: currentUser.uid,
+      const auth = await getAuth();
+      if (!auth) throw new Error('Debes iniciar sesión de nuevo.');
+
+      const payload = {
         experienceId,
-        experienceName,
-        attendees: attendeesNum,
-        userName: formData.nombre,
-        userEmail: formData.correo,
-        userPhone: formData.telefono,
-        paymentMethod: formData.paymentMethod,
-        totalPrice,
-        // experienceDate se debería obtener del objeto experience para registrarla en la reserva
+        attendees:    n,
+        userName:     form.nombre,
+        userEmail:    form.correo,
+        userPhone:    form.telefono,
+        paymentMethod: form.paymentMethod,
+        totalPrice:   total
       };
 
-      const { id: reservationId, error: reservationError } = await createReservation(reservationData);
+      const res = await createReservationApi(auth.token, payload);
+      if (res.error) throw new Error(res.error);
 
-      if (reservationError) {
-        setError(`Error al crear reservación: ${reservationError}`);
-        setSnackbarVisible(true);
-      } else {
-        const qrData = JSON.stringify({ reservationId, experienceId, userId: currentUser.uid, attendees: attendeesNum });
-        setQrCodeValue(qrData);
-        setReservationSuccess(true);
-        // Aquí se podría simular el envío de correo
-        Alert.alert('¡Reservación Exitosa!', 'Tu código QR ha sido generado. Lo encontrarás también en tu perfil.');
-        // navigation.navigate('UserProfile', { screen: 'MyReservations' }); O algo similar
-      }
-    } catch (err) {
-      setError('Ocurrió un error inesperado. Intenta de nuevo.');
-      setSnackbarVisible(true);
+      onSuccess(res.id, auth.user.id, n);
+    } catch (e) {
+      showError(e.message || 'Error al crear reservación');
     } finally {
       setLoading(false);
     }
   };
 
-  if (reservationSuccess) {
+  // Éxito: mostramos QR y detalles
+  if (success) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <Text style={styles.successTitle}>¡Reservación Confirmada!</Text>
-        <Text style={styles.successSubtitle}>Presenta este código QR en el evento:</Text>
-        {qrCodeValue ? (
-          <View style={styles.qrContainer}>
-            <QRCode
-              value={qrCodeValue}
-              size={200}
-              logoBackgroundColor='transparent'
-            />
-          </View>
-        ) : <ActivityIndicator />}
-        <Text style={styles.detailsText}>Experiencia: {experienceName}</Text>
-        <Text style={styles.detailsText}>Personas: {formData.attendees}</Text>
-        <Text style={styles.detailsText}>Total: {formatPrice(totalPrice)}</Text>
-        <CustomButton label="Ver Mis Reservas" onPress={() => navigation.popToTop() /* o a Mis Reservas */} type="primary" style={{marginTop: 20}}/>
+      <SafeAreaView style={styles.center}>
+        <Text style={styles.okTitle}>¡Reservación confirmada!</Text>
+        {qrValue
+          ? <QRCode value={qrValue} size={200} />
+          : <ActivityIndicator />}
+        <Text style={{ marginTop: 10 }}>Personas: {form.attendees}</Text>
+        <Text>Total: {formatPrice(total)}</Text>
+        <CustomButton
+          label="Ver Mis Reservas"
+          onPress={() => navigation.navigate('Reservations')}
+          style={{ marginTop: 20 }}
+        />
       </SafeAreaView>
     );
   }
 
+  // Formulario de reserva
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-            <CustomButton icon="arrow-left" type="text" onPress={() => navigation.goBack()} style={styles.backButton}/>
-            <Text style={styles.headerTitle}>Confirmar Reservación</Text>
-            <View style={{width: 50}} />
-        </View>
-        
-        <Text style={styles.experienceTitle}>{experienceName}</Text>
-        <Text style={styles.priceInfo}>Precio por persona: {formatPrice(pricePerPerson)}</Text>
-
-        <FormInput
-          label="Cantidad de Personas"
-          value={formData.attendees}
-          onChangeText={(val) => handleInputChange('attendees', val.replace(/[^0-9]/g, ''))} // Solo números
-          keyboardType="number-pad"
-          icon="account-multiple"
-          disabled={loading}
-          validate={(val) => parseInt(val) > 0}
-          errorMessage="Debe ser al menos 1 persona"
-        />
-        <FormInput label="Nombre Completo" value={formData.nombre} onChangeText={(val) => handleInputChange('nombre', val)} icon="account" disabled={loading} validate={isValidName} errorMessage="Nombre inválido" />
-        <FormInput label="Correo Electrónico" value={formData.correo} onChangeText={(val) => handleInputChange('correo', val)} icon="email" keyboardType="email-address" disabled={loading} validate={isValidEmail} errorMessage="Correo inválido" />
-        <FormInput label="Teléfono (8 dígitos)" value={formData.telefono} onChangeText={(val) => handleInputChange('telefono', val)} icon="phone" keyboardType="phone-pad" maxLength={8} disabled={loading} validate={isValidPhone} errorMessage="Teléfono inválido" />
-
-        <Text style={styles.sectionTitle}>Método de Pago</Text>
-        <RadioButton.Group onValueChange={newValue => handleInputChange('paymentMethod', newValue)} value={formData.paymentMethod}>
-          <View style={styles.radioItem}>
-            <RadioButton value="payOnSite" disabled={loading} color={theme.colors.primary}/>
-            <Text onPress={() => !loading && handleInputChange('paymentMethod', 'payOnSite')}>Pago en el lugar</Text>
-          </View>
-          <View style={styles.radioItem}>
-            <RadioButton value="transfer" disabled={loading} color={theme.colors.primary}/>
-            <Text onPress={() => !loading && handleInputChange('paymentMethod', 'transfer')}>Transferencia Bancaria (Coordinar)</Text>
-          </View>
-        </RadioButton.Group>
-        {formData.paymentMethod === 'transfer' && (
-            <Text style={styles.transferNote}>Nota: Si eliges transferencia, recibirás los detalles por correo para completar el pago y confirmar tu reserva.</Text>
-        )}
-
-        <Text style={styles.totalPriceText}>Total Estimado: {formatPrice(totalPrice)}</Text>
-
-        <View style={styles.checkboxContainer}>
-          <Checkbox.Android
-            status={formData.agreedToTerms ? 'checked' : 'unchecked'}
-            onPress={() => handleInputChange('agreedToTerms', !formData.agreedToTerms)}
-            color={theme.colors.primary}
-            disabled={loading}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        <ScrollView contentContainerStyle={{ padding: 20 }}>
+          <CustomButton
+            icon="arrow-left"
+            type="text"
+            onPress={() => navigation.goBack()}
           />
-          <Text style={styles.termsText} onPress={() => handleInputChange('agreedToTerms', !formData.agreedToTerms)}>
-            Acepto los términos y condiciones de la reservación.
-          </Text>
-        </View>
-        {/* Aquí podrías añadir un enlace a los términos y condiciones */} 
 
-        <CustomButton
-          label="Confirmar y Reservar"
-          type="primary"
-          icon="calendar-check"
-          onPress={handleBooking}
-          loading={loading}
-          disabled={!formData.agreedToTerms || loading}
-          fullWidth
-          style={{marginTop: 20}}
-        />
-      </ScrollView>
+          <Text style={styles.title}>{experienceName}</Text>
+          <Text style={styles.subtitle}>
+            {formatPrice(pricePerPerson)} por persona
+          </Text>
+
+          <FormInput
+            label="Cantidad de personas"
+            icon="account-multiple"
+            value={form.attendees}
+            keyboardType="number-pad"
+            onChangeText={v => setF('attendees', v.replace(/[^0-9]/g, ''))}
+          />
+
+          <FormInput
+            label="Nombre completo"
+            icon="account"
+            value={form.nombre}
+            onChangeText={v => setF('nombre', v)}
+          />
+          <FormInput
+            label="Correo"
+            icon="email"
+            keyboardType="email-address"
+            value={form.correo}
+            onChangeText={v => setF('correo', v)}
+          />
+          <FormInput
+            label="Teléfono"
+            icon="phone"
+            keyboardType="phone-pad"
+            maxLength={8}
+            value={form.telefono}
+            onChangeText={v => setF('telefono', v)}
+          />
+
+          <Text style={styles.section}>Método de pago</Text>
+          <RadioButton.Group
+            onValueChange={v => setF('paymentMethod', v)}
+            value={form.paymentMethod}
+          >
+            <View style={styles.radioRow}>
+              <RadioButton value="payOnSite" />
+              <Text>Pago en el lugar</Text>
+            </View>
+            <View style={styles.radioRow}>
+              <RadioButton value="transfer" />
+              <Text>Transferencia bancaria</Text>
+            </View>
+          </RadioButton.Group>
+          {form.paymentMethod === 'transfer' && (
+            <Text style={styles.note}>
+              Recibirás los datos bancarios por correo.
+            </Text>
+          )}
+
+          <Text style={styles.total}>Total: {formatPrice(total)}</Text>
+
+          <View style={styles.checkRow}>
+            <Checkbox.Android
+              status={form.agreed ? 'checked' : 'unchecked'}
+              onPress={() => setF('agreed', !form.agreed)}
+              color={theme.colors.primary}
+            />
+            <Text onPress={() => setF('agreed', !form.agreed)}>
+              Acepto los términos y condiciones.
+            </Text>
+          </View>
+
+          <CustomButton
+            label="Confirmar y reservar"
+            icon="calendar-check"
+            onPress={handleBooking}
+            loading={loading}
+            disabled={loading}
+            fullWidth
+            style={{ marginTop: 20 }}
+          />
+        </ScrollView>
       </KeyboardAvoidingView>
-      <Snackbar visible={snackbarVisible} onDismiss={() => setSnackbarVisible(false)} duration={3000} style={{ backgroundColor: theme.colors.error }}>{error}</Snackbar>
+
+      <Snackbar
+        visible={snack}
+        onDismiss={() => setSnack(false)}
+        duration={3000}
+        style={{ backgroundColor: theme.colors.error }}
+      >
+        {error}
+      </Snackbar>
     </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  scrollContent: { flexGrow: 1, padding: 20 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 15,
-  },
-  backButton: { alignSelf: 'flex-start'},
-  headerTitle: { fontSize: 20, fontWeight: 'bold', textAlign: 'center' },
-  experienceTitle: { fontSize: 22, fontWeight: 'bold', marginBottom: 5, textAlign: 'center' },
-  priceInfo: { fontSize: 16, color: 'gray', marginBottom: 20, textAlign: 'center' },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginTop: 20, marginBottom: 10 },
-  radioItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  transferNote: { fontSize: 12, color: 'grey', fontStyle: 'italic', marginLeft: 10, marginBottom: 10},
-  totalPriceText: { fontSize: 18, fontWeight: 'bold', color: '#FF4081', textAlign: 'right', marginTop: 15, marginBottom: 15},
-  checkboxContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 15, marginBottom: 10 },
-  termsText: { flex: 1, marginLeft: 8, fontSize: 13, color: '#333' }, 
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#ffffff'
-  },
-  successTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 10, color: 'green', textAlign: 'center' },
-  successSubtitle: { fontSize: 16, marginBottom: 20, textAlign: 'center' },
-  qrContainer: {
-    padding: 10,
-    backgroundColor: 'white',
-    borderRadius: 10,
-    elevation: 5,
-    marginBottom: 20,
-  },
-  detailsText: { fontSize: 14, marginBottom: 5, textAlign: 'center' },
+  container:  { flex: 1, backgroundColor: '#fff' },
+  center:     { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  title:      { fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 4 },
+  subtitle:   { textAlign: 'center', color: '#777', marginBottom: 20 },
+  section:    { fontSize: 18, fontWeight: 'bold', marginTop: 20 },
+  note:       { fontSize: 12, color: 'gray', fontStyle: 'italic', marginLeft: 10 },
+  total:      { fontSize: 18, fontWeight: 'bold', color: '#FF4081', textAlign: 'right', marginTop: 15 },
+  radioRow:   { flexDirection: 'row', alignItems: 'center', marginVertical: 4 },
+  checkRow:   { flexDirection: 'row', alignItems: 'center', marginTop: 15 },
+  okTitle:    { fontSize: 24, fontWeight: 'bold', color: 'green', marginBottom: 20 },
 });
-
-export default BookingScreen; 

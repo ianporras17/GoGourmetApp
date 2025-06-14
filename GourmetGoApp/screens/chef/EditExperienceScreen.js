@@ -79,8 +79,16 @@ const EditExperienceScreen = ({ route, navigation }) => {
 
   /* ---------- validación ---------- */
   const validateForm = () => {
+    const combined = new Date(
+      form.date.getFullYear(),
+      form.date.getMonth(),
+      form.date.getDate(),
+      form.time.getHours(),
+      form.time.getMinutes(),
+      0, 0
+    );
     const e={};
-    if(form.date < new Date().setHours(0,0,0,0)) e.date='Fecha pasada';
+    if (combined < new Date()) e.date = 'Fecha y hora no pueden ser pasadas';
     if(!form.capacity || +form.capacity<=0)      e.capacity='Capacidad > 0';
     if(!form.pricePerPerson || +form.pricePerPerson<=0) e.pricePerPerson='Precio > 0';
     if(form.locationUrl && !isValidUrl(form.locationUrl)) e.locationUrl='URL inválida';
@@ -90,11 +98,17 @@ const EditExperienceScreen = ({ route, navigation }) => {
 
   /* ---------- submit ---------- */
   const handleSubmit = async () => {
-    console.log("si llego")
 
     setSaving(true);
     try {
-      const fechaHora = new Date(form.date);
+      const fechaHora = new Date(
+        form.date.getFullYear(),
+        form.date.getMonth(),
+        form.date.getDate(),
+        form.time.getHours(),
+        form.time.getMinutes(),
+        0, 0
+      );
       fechaHora.setHours(form.time.getHours());
       fechaHora.setMinutes(form.time.getMinutes());
 

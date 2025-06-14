@@ -1,55 +1,50 @@
+// screens/user/RateExperienceScreen.js
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, Image, Alert, TouchableOpacity } from 'react-native';
-import { Text, useTheme, TextInput, ActivityIndicator, Snackbar } from 'react-native-paper';
+import {
+  StyleSheet, View, ScrollView, Image, Alert, TouchableOpacity
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  Text, useTheme, TextInput, ActivityIndicator, Snackbar
+} from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
-import CustomButton from '../../components/CustomButton';
-import { getExperienceById, createRating } from '../../firebase/db';
-import { uploadImage } from '../../firebase/storage';
-import { getCurrentUser } from '../../firebase/auth';
-import { formatDate, formatDateTime } from '../../utils/helpers';
+import CustomButton          from '../../components/CustomButton';
+import { getExperience, createRatingApi, uploadImage } from '../../utils/api';
+import { getAuth }          from '../../utils/authStorage';
+import { formatDateTime }   from '../../utils/helpers';
 
-const RateExperienceScreen = ({ route, navigation }) => {
+export default function RateExperienceScreen({ route, navigation }) {
   const theme = useTheme();
   const { reservationId, experienceId, experienceName } = route.params;
-  const currentUser = getCurrentUser();
-  
-  const [experience, setExperience] = useState(null);
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState('');
-  const [images, setImages] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [snackbarVisible, setSnackbarVisible] = useState(false);
 
+  /* ---------- estado ---------- */
+  const [experience, setExperience]   = useState(null);
+  const [rating, setRating]           = useState(0);
+  const [comment, setComment]         = useState('');
+  const [images, setImages]           = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [submitting, setSubmitting]   = useState(false);
+  const [error, setError]             = useState('');
+  const [snackbar, setSnackbar]       = useState(false);
+
+  /* ---------- carga experiencia ---------- */
   useEffect(() => {
-    loadExperience();
-  }, []);
-
-  const loadExperience = async () => {
-    try {
-      const { data, error: fetchError } = await getExperienceById(experienceId);
-      if (fetchError) {
-        setError(fetchError);
-        setSnackbarVisible(true);
-      } else {
+    (async () => {
+      try {
+        const data = await getExperience(experienceId);
+        if (data.error) throw new Error(data.error);
         setExperience(data);
+      } catch (e) {
+        setError(e.message); setSnackbar(true);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError('Error al cargar la experiencia');
-      setSnackbarVisible(true);
-    } finally {
-      setLoading(false);
-    }
-  };
+    })();
+  }, [experienceId]);
 
-  const handleStarPress = (starRating) => {
-    setRating(starRating);
-  };
-
+  /* ---------- helpers ---------- */
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -58,358 +53,170 @@ const RateExperienceScreen = ({ route, navigation }) => {
         aspect: [4, 3],
         quality: 0.8,
       });
-
       if (!result.canceled && result.assets[0]) {
         setImages([...images, result.assets[0]]);
       }
-    } catch (error) {
-      setError('Error al seleccionar imagen');
-      setSnackbarVisible(true);
+    } catch {
+      setError('Error al seleccionar imagen'); setSnackbar(true);
     }
   };
+  const removeImage = (i) => setImages(images.filter((_, idx) => idx !== i));
 
-  const removeImage = (index) => {
-    const newImages = images.filter((_, i) => i !== index);
-    setImages(newImages);
-  };
-
+  /* ---------- envío ---------- */
   const submitRating = async () => {
-    if (rating === 0) {
-      setError('Por favor selecciona una calificación');
-      setSnackbarVisible(true);
-      return;
-    }
-
-    if (comment.trim().length < 10) {
-      setError('El comentario debe tener al menos 10 caracteres');
-      setSnackbarVisible(true);
-      return;
-    }
+    if (!rating)     return showMsg('Selecciona una calificación');
+    if (comment.trim().length < 10) return showMsg('Comentario mínimo 10 caracteres');
 
     setSubmitting(true);
-    setError('');
-
     try {
-      // Upload images if any
-      const imageUrls = [];
-      for (const image of images) {
-        const { url, error: uploadError } = await uploadImage(image.uri, 'ratings');
-        if (uploadError) {
-          throw new Error(`Error uploading image: ${uploadError}`);
-        }
-        imageUrls.push(url);
+      const auth = await getAuth();
+      if (!auth) throw new Error('Sesión expirada. Vuelve a iniciar sesión.');
+
+      /* subir imágenes (máx 3) */
+      const urls = [];
+      for (const img of images) {
+        const res = await uploadImage(auth.token, { uri: img.uri });
+        if (res.error) throw new Error(res.error);
+        urls.push(res.url);
       }
 
-      const ratingData = {
-        userId: currentUser.uid,
-        experienceId,
+      const payload = {
         reservationId,
+        experienceId,
         rating,
-        comment: comment.trim(),
-        images: imageUrls,
-        experienceName,
+        comment : comment.trim(),
+        images  : urls,
       };
+      const res = await createRatingApi(auth.token, payload);
+      if (res.error) throw new Error(res.error);
 
-      const { error: createError } = await createRating(ratingData);
-      
-      if (createError) {
-        setError(`Error al enviar calificación: ${createError}`);
-        setSnackbarVisible(true);
-      } else {
-        Alert.alert(
-          '¡Calificación Enviada!',
-          'Gracias por tu opinión. Tu calificación ayuda a otros usuarios.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
-      }
-    } catch (err) {
-      setError('Error inesperado al enviar calificación');
-      setSnackbarVisible(true);
+      Alert.alert('¡Gracias!', 'Tu opinión fue enviada correctamente.', [
+        { text: 'OK', onPress: () => navigation.goBack() },
+      ]);
+    } catch (e) {
+      showMsg(e.message || 'Error al enviar calificación');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const renderStars = () => {
-    const stars = [];
-    for (let i = 1; i <= 5; i++) {
-      stars.push(
-        <TouchableOpacity key={i} onPress={() => handleStarPress(i)} disabled={submitting}>
-          <MaterialCommunityIcons
-            name={i <= rating ? 'star' : 'star-outline'}
-            size={40}
-            color={i <= rating ? '#FFC107' : '#E0E0E0'}
-            style={styles.star}
-          />
-        </TouchableOpacity>
-      );
-    }
-    return stars;
-  };
+  const showMsg = (msg) => { setError(msg); setSnackbar(true); };
 
-  if (loading) {
+  /* ---------- UI ---------- */
+  if (loading)
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator animating={true} size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Cargando experiencia...</Text>
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={{ marginTop: 8 }}>Cargando…</Text>
       </SafeAreaView>
     );
-  }
 
-  if (!experience) {
+  if (!experience)
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={styles.center}>
         <MaterialCommunityIcons name="alert-circle-outline" size={50} color={theme.colors.error} />
-        <Text style={styles.errorText}>No se pudo cargar la experiencia</Text>
-        <CustomButton label="Volver" onPress={() => navigation.goBack()} type="primary" />
+        <Text style={{ marginTop: 8, color: theme.colors.error }}>No se pudo cargar la experiencia.</Text>
+        <CustomButton label="Volver" onPress={() => navigation.goBack()} />
       </SafeAreaView>
     );
-  }
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-          <CustomButton 
-            icon="arrow-left" 
-            type="text" 
-            onPress={() => navigation.goBack()} 
-            style={styles.backButton}
-          />
-          <Text style={styles.headerTitle}>Calificar Experiencia</Text>
-          <View style={{ width: 50 }} />
-        </View>
+      <ScrollView contentContainerStyle={{ padding: 20 }}>
+        {/* encabezado */}
+        <CustomButton icon="arrow-left" type="text" onPress={() => navigation.goBack()} />
 
-        {experience.images && experience.images.length > 0 && (
-          <Image source={{ uri: experience.images[0] }} style={styles.experienceImage} />
+        {experience.images?.[0] && (
+          <Image source={{ uri: experience.images[0] }} style={styles.image} />
         )}
 
-        <Text style={styles.experienceTitle}>{experienceName}</Text>
-        <Text style={styles.experienceDate}>
-          {experience.date ? formatDateTime(experience.date) : 'Fecha no disponible'}
-        </Text>
+        <Text style={styles.title}>{experienceName}</Text>
+        <Text style={styles.date}>{formatDateTime(new Date(experience.fecha_hora))}</Text>
 
-        <View style={styles.ratingSection}>
-          <Text style={styles.sectionTitle}>¿Cómo calificarías esta experiencia?</Text>
-          <View style={styles.starsContainer}>
-            {renderStars()}
-          </View>
-          <Text style={styles.ratingText}>
-            {rating === 0 ? 'Selecciona una calificación' : 
-             rating === 1 ? 'Muy malo' :
-             rating === 2 ? 'Malo' :
-             rating === 3 ? 'Regular' :
-             rating === 4 ? 'Bueno' : 'Excelente'}
-          </Text>
+        {/* estrellas */}
+        <Text style={styles.section}>Calificación</Text>
+        <View style={styles.starRow}>
+          {[1,2,3,4,5].map(i => (
+            <TouchableOpacity key={i} onPress={() => setRating(i)} disabled={submitting}>
+              <MaterialCommunityIcons
+                name={i <= rating ? 'star' : 'star-outline'}
+                size={40}
+                color={i <= rating ? '#FFC107' : '#E0E0E0'}
+              />
+            </TouchableOpacity>
+          ))}
         </View>
 
-        <View style={styles.commentSection}>
-          <Text style={styles.sectionTitle}>Cuéntanos tu experiencia</Text>
-          <TextInput
-            mode="outlined"
-            placeholder="Describe tu experiencia, qué te gustó, qué mejorarías..."
-            value={comment}
-            onChangeText={setComment}
-            multiline
-            numberOfLines={4}
-            maxLength={500}
-            disabled={submitting}
-            style={styles.commentInput}
-          />
-          <Text style={styles.characterCount}>{comment.length}/500</Text>
-        </View>
+        {/* comentario */}
+        <Text style={styles.section}>Comentario</Text>
+        <TextInput
+          mode="outlined"
+          placeholder="Describe tu experiencia…"
+          value={comment}
+          onChangeText={setComment}
+          multiline
+          numberOfLines={4}
+          maxLength={500}
+          disabled={submitting}
+          style={{ marginBottom: 6 }}
+        />
+        <Text style={styles.count}>{comment.length}/500</Text>
 
-        <View style={styles.imageSection}>
-          <Text style={styles.sectionTitle}>Agregar fotos (opcional)</Text>
-          <View style={styles.imagesContainer}>
-            {images.map((image, index) => (
-              <View key={index} style={styles.imageContainer}>
-                <Image source={{ uri: image.uri }} style={styles.selectedImage} />
-                <TouchableOpacity 
-                  style={styles.removeImageButton}
-                  onPress={() => removeImage(index)}
-                  disabled={submitting}
-                >
-                  <MaterialCommunityIcons name="close-circle" size={24} color="#FF4081" />
-                </TouchableOpacity>
-              </View>
-            ))}
-            
-            {images.length < 3 && (
-              <TouchableOpacity 
-                style={styles.addImageButton} 
-                onPress={pickImage}
-                disabled={submitting}
-              >
-                <MaterialCommunityIcons name="camera-plus" size={40} color={theme.colors.primary} />
-                <Text style={styles.addImageText}>Agregar foto</Text>
+        {/* imágenes */}
+        <Text style={styles.section}>Fotos (opcional)</Text>
+        <View style={styles.imgRow}>
+          {images.map((img, i) => (
+            <View key={i} style={styles.thumbWrap}>
+              <Image source={{ uri: img.uri }} style={styles.thumb} />
+              <TouchableOpacity style={styles.close} onPress={() => removeImage(i)}>
+                <MaterialCommunityIcons name="close-circle" size={22} color="#FF4081" />
               </TouchableOpacity>
-            )}
-          </View>
+            </View>
+          ))}
+          {images.length < 3 && (
+            <TouchableOpacity style={styles.add} onPress={pickImage}>
+              <MaterialCommunityIcons name="camera-plus" size={36} color={theme.colors.primary} />
+            </TouchableOpacity>
+          )}
         </View>
 
+        {/* enviar */}
         <CustomButton
           label="Enviar Calificación"
-          type="primary"
           icon="send"
           onPress={submitRating}
           loading={submitting}
           disabled={rating === 0 || comment.trim().length < 10 || submitting}
           fullWidth
-          style={styles.submitButton}
+          style={{ marginTop: 20 }}
         />
       </ScrollView>
-      
-      <Snackbar 
-        visible={snackbarVisible} 
-        onDismiss={() => setSnackbarVisible(false)} 
-        duration={3000}
-        style={{ backgroundColor: theme.colors.error }}
-      >
+
+      <Snackbar visible={snackbar} onDismiss={() => setSnackbar(false)} duration={3000}
+                style={{ backgroundColor: theme.colors.error }}>
         {error}
       </Snackbar>
     </SafeAreaView>
   );
-};
+}
 
+/* ---------- estilos ---------- */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 20,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  backButton: {
-    alignSelf: 'flex-start',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  experienceImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 10,
-    marginBottom: 15,
-  },
-  experienceTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 5,
-  },
-  experienceDate: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 30,
-  },
-  ratingSection: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  starsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginBottom: 10,
-  },
-  star: {
-    marginHorizontal: 5,
-  },
-  ratingText: {
-    fontSize: 16,
-    color: '#666',
-    fontStyle: 'italic',
-  },
-  commentSection: {
-    marginBottom: 30,
-  },
-  commentInput: {
-    marginBottom: 5,
-  },
-  characterCount: {
-    textAlign: 'right',
-    fontSize: 12,
-    color: '#666',
-  },
-  imageSection: {
-    marginBottom: 30,
-  },
-  imagesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'flex-start',
-  },
-  imageContainer: {
-    position: 'relative',
-    marginRight: 10,
-    marginBottom: 10,
-  },
-  selectedImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    backgroundColor: 'white',
-    borderRadius: 12,
-  },
-  addImageButton: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-    borderStyle: 'dashed',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-    marginBottom: 10,
-  },
-  addImageText: {
-    fontSize: 10,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 5,
-  },
-  submitButton: {
-    marginTop: 20,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#666',
-  },
-  errorText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: 'red',
-    textAlign: 'center',
-  },
-});
+  container:{ flex:1, backgroundColor:'#fff' },
+  center:{ flex:1, justifyContent:'center', alignItems:'center', padding:20 },
+  image:{ width:'100%', height:200, borderRadius:10, marginBottom:15 },
+  title:{ fontSize:22, fontWeight:'bold', textAlign:'center', marginBottom:4 },
+  date:{ fontSize:14, color:'#666', textAlign:'center', marginBottom:20 },
 
-export default RateExperienceScreen;
+  section:{ fontSize:18, fontWeight:'bold', marginTop:20, marginBottom:10 },
+  starRow:{ flexDirection:'row', justifyContent:'center' },
+  count:{ fontSize:12, color:'#666', textAlign:'right' },
+
+  imgRow:{ flexDirection:'row', flexWrap:'wrap', alignItems:'center' },
+  thumbWrap:{ marginRight:10, marginBottom:10, position:'relative' },
+  thumb:{ width:80, height:80, borderRadius:8 },
+  close:{ position:'absolute', top:-6, right:-6, backgroundColor:'#fff', borderRadius:10 },
+
+  add:{ width:80, height:80, borderRadius:8, borderWidth:2, borderColor:'#ddd',
+        borderStyle:'dashed', justifyContent:'center', alignItems:'center', marginBottom:10 },
+});

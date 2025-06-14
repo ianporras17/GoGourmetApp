@@ -1,360 +1,228 @@
+// screens/user/EditProfileScreen.js
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, Alert, TouchableOpacity, Image } from 'react-native';
-import { Text, useTheme, ActivityIndicator, Snackbar } from 'react-native-paper';
+import {
+  StyleSheet, View, ScrollView, TouchableOpacity, Image,
+  KeyboardAvoidingView, Platform, Alert
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  Text, useTheme, ActivityIndicator, Snackbar
+} from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
 import CustomButton from '../../components/CustomButton';
-import FormInput from '../../components/FormInput';
-import { getUserProfile, updateUserProfile } from '../../firebase/db';
-import { uploadImage } from '../../firebase/storage';
-import { getCurrentUser } from '../../firebase/auth';
-import { isValidEmail, isValidPhone, isValidCedula } from '../../utils/validations';
+import FormInput    from '../../components/FormInput';
+import {
+  isValidEmail, isValidPhone, isValidCedula
+} from '../../utils/validations';
 
-const EditProfileScreen = ({ navigation }) => {
+import { getAuth }           from '../../utils/authStorage';
+import { getMyProfile,
+         updateMyProfile,
+         uploadImage }        from '../../utils/api';
+
+export default function EditProfileScreen({ navigation }) {
   const theme = useTheme();
-  const currentUser = getCurrentUser();
-  
-  const [formData, setFormData] = useState({
-    email: '',
-    phone: '',
-    cedula: '',
-    profileImage: null,
+
+  /* ---------------- estado ---------------- */
+  const [auth, setAuth]           = useState(null);  // { token, user }
+  const [form, setForm]           = useState({
+    email:'', phone:'', cedula:'', profileImage:null,
   });
-  const [originalData, setOriginalData] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [snackbarVisible, setSnackbarVisible] = useState(false);
-  const [imageUri, setImageUri] = useState(null);
+  const [origImg, setOrigImg]     = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [saving,  setSaving ]     = useState(false);
+  const [error,   setError  ]     = useState('');
+  const [snack,   setSnack  ]     = useState(false);
 
-  useEffect(() => {
-    loadUserProfile();
-  }, []);
+  /* obtener token → después perfil */
+  useEffect(()=>{ getAuth().then(setAuth); },[]);
+  useEffect(()=>{ if(auth) fetchProfile(); },[auth]);
 
-  const loadUserProfile = async () => {
+  /* ------------ API ------------ */
+  const fetchProfile = async () => {
     try {
-      const { data, error: fetchError } = await getUserProfile(currentUser.uid);
-      if (fetchError) {
-        setError(fetchError);
-        setSnackbarVisible(true);
-      } else if (data) {
-        const profileData = {
-          email: data.email || '',
-          phone: data.phone || '',
-          cedula: data.cedula || '',
-          profileImage: data.profileImage || null,
-        };
-        setFormData(profileData);
-        setOriginalData(profileData);
-        setImageUri(data.profileImage);
-      }
-    } catch (err) {
-      setError('Error al cargar el perfil');
-      setSnackbarVisible(true);
-    } finally {
-      setLoading(false);
-    }
+      const res = await getMyProfile(auth.token);
+      if (res.error) throw new Error(res.error);
+
+      setForm({
+        email       : res.email    || '',
+        phone       : res.telefono ? String(res.telefono) : '',
+        cedula      : res.cedula   || '',
+        profileImage: res.profile_image || null,
+      });
+      setOrigImg(res.profile_image || null);
+    } catch (e) {
+      setErr(e.message);
+    } finally { setLoading(false); }
   };
 
-  const handleInputChange = (name, value) => {
-    setFormData({ ...formData, [name]: value });
-  };
+  /* ------------ helpers ------------ */
+  const setF = (k,v)=> setForm({...form,[k]:v});
+  const show = (msg)=> { setError(msg); setSnack(true); };
 
   const pickImage = async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
+        aspect:[1,1], quality:0.8,
       });
-
-      if (!result.canceled && result.assets[0]) {
-        setImageUri(result.assets[0].uri);
-        setFormData({ ...formData, profileImage: result.assets[0].uri });
-      }
-    } catch (error) {
-      setError('Error al seleccionar imagen');
-      setSnackbarVisible(true);
-    }
+      if (!res.canceled && res.assets[0])
+        setF('profileImage', res.assets[0].uri);
+    } catch { show('Error al seleccionar imagen'); }
   };
 
-  const validateForm = () => {
-    if (!isValidEmail(formData.email)) {
-      setError('Correo electrónico inválido');
-      setSnackbarVisible(true);
-      return false;
-    }
-    if (!isValidPhone(formData.phone)) {
-      setError('Número de teléfono inválido (8 dígitos)');
-      setSnackbarVisible(true);
-      return false;
-    }
-    if (!isValidCedula(formData.cedula)) {
-      setError('Cédula inválida (9 dígitos)');
-      setSnackbarVisible(true);
-      return false;
-    }
+  /* ------------ validar ------------ */
+  const valid = () => {
+    if (!isValidEmail (form.email )) return show('Correo inválido'), false;
+    if (form.phone  && !isValidPhone (form.phone )) return show('Teléfono inválido'), false;
+    if (form.cedula && !isValidCedula(form.cedula)) return show('Cédula inválida'), false;
     return true;
   };
 
+  /* ------------ guardar ------------ */
   const handleSave = async () => {
-    if (!validateForm()) return;
-
+    if (!valid()) return;
     setSaving(true);
-    setError('');
 
     try {
-      let profileImageUrl = originalData.profileImage;
+      let imgUrl = origImg;
 
-      // Upload new image if changed
-      if (formData.profileImage && formData.profileImage !== originalData.profileImage) {
-        const { url, error: uploadError } = await uploadImage(formData.profileImage, 'profiles');
-        if (uploadError) {
-          throw new Error(`Error uploading image: ${uploadError}`);
-        }
-        profileImageUrl = url;
+      /* subir imagen si cambió y no es URL ya existente */
+      if (form.profileImage && form.profileImage !== origImg && !form.profileImage.startsWith('http')) {
+        const up = await uploadImage(auth.token, { uri:form.profileImage });
+        if (up.error) throw new Error(up.error);
+        imgUrl = up.url;
       }
 
-      const updateData = {
-        email: formData.email,
-        phone: formData.phone,
-        cedula: formData.cedula,
-        profileImage: profileImageUrl,
-      };
+      const res = await updateMyProfile(auth.token, {
+        email   : form.email,
+        telefono: form.phone,
+        cedula  : form.cedula,
+        profileImage: imgUrl,
+      });
+      if (!res.success) throw new Error(res.error);
 
-      const { success, error: updateError } = await updateUserProfile(currentUser.uid, updateData);
-      
-      if (!success) {
-        setError(`Error al actualizar perfil: ${updateError}`);
-        setSnackbarVisible(true);
-      } else {
-        Alert.alert(
-          '¡Perfil Actualizado!',
-          'Tus datos han sido guardados exitosamente.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
-      }
-    } catch (err) {
-      setError('Error inesperado al guardar');
-      setSnackbarVisible(true);
-    } finally {
-      setSaving(false);
-    }
+      Alert.alert('Perfil actualizado','Los cambios se guardaron correctamente',
+        [{text:'OK', onPress:()=>navigation.goBack()}]);
+    } catch (e) {
+      show(e.message || 'Error al guardar');
+    } finally { setSaving(false); }
   };
 
-  if (loading) {
+  /* ------------ loader ------------ */
+  if (loading)
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator animating={true} size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Cargando perfil...</Text>
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator size="large" color={theme.colors.primary}/>
+        <Text style={{marginTop:10,color:'#666'}}>Cargando perfil…</Text>
       </SafeAreaView>
     );
-  }
 
+  /* ------------ UI ------------ */
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-          <CustomButton 
-            icon="arrow-left" 
-            type="text" 
-            onPress={() => navigation.goBack()} 
-            style={styles.backButton}
-          />
-          <Text style={styles.headerTitle}>Editar Perfil</Text>
-          <View style={{ width: 50 }} />
-        </View>
+      <KeyboardAvoidingView style={styles.container}
+                            behavior={Platform.OS==='ios'?'padding':'height'}>
+        <ScrollView contentContainerStyle={{padding:20}}>
+          {/* header */}
+          <View style={styles.header}>
+            <CustomButton icon="arrow-left" type="text"
+                          onPress={()=>navigation.goBack()} />
+            <Text style={styles.title}>Editar perfil</Text>
+            <View style={{width:48}} />
+          </View>
 
-        <View style={styles.imageSection}>
-          <TouchableOpacity style={styles.imageContainer} onPress={pickImage} disabled={saving}>
-            {imageUri ? (
-              <Image source={{ uri: imageUri }} style={styles.profileImage} />
-            ) : (
-              <View style={styles.placeholderImage}>
-                <MaterialCommunityIcons name="account" size={60} color="#ccc" />
-              </View>
-            )}
-            <View style={styles.imageOverlay}>
-              <MaterialCommunityIcons name="camera" size={24} color="white" />
+          {/* imagen */}
+          <TouchableOpacity style={styles.imgWrap} onPress={pickImage}>
+            {form.profileImage
+              ? <Image source={{uri:form.profileImage}} style={styles.img}/>
+              : <View style={styles.imgPlaceholder}>
+                  <MaterialCommunityIcons name="account" size={60} color="#ccc"/>
+                </View>}
+            <View style={styles.imgOverlay}>
+              <MaterialCommunityIcons name="camera" size={24} color="white"/>
             </View>
           </TouchableOpacity>
-          <Text style={styles.imageHint}>Toca para cambiar foto</Text>
-        </View>
+          <Text style={styles.imgHint}>Toca la foto para cambiar</Text>
 
-        <View style={styles.formSection}>
+          {/* inputs */}
           <FormInput
-            label="Correo Electrónico"
-            value={formData.email}
-            onChangeText={(val) => handleInputChange('email', val)}
+            label="Correo electrónico"
             icon="email"
             keyboardType="email-address"
             disabled={saving}
-            validate={isValidEmail}
-            errorMessage="Correo inválido"
+            value={form.email}
+            onChangeText={(v)=>setF('email',v)}
           />
-          
           <FormInput
             label="Teléfono (8 dígitos)"
-            value={formData.phone}
-            onChangeText={(val) => handleInputChange('phone', val.replace(/[^0-9]/g, ''))}
             icon="phone"
             keyboardType="phone-pad"
             maxLength={8}
             disabled={saving}
-            validate={isValidPhone}
-            errorMessage="Teléfono inválido"
+            value={form.phone}
+            onChangeText={(v)=>setF('phone',v.replace(/[^0-9]/g,''))}
+            placeholder="Opcional"
           />
-          
           <FormInput
             label="Cédula (9 dígitos)"
-            value={formData.cedula}
-            onChangeText={(val) => handleInputChange('cedula', val.replace(/[^0-9]/g, ''))}
             icon="card-account-details"
             keyboardType="number-pad"
             maxLength={9}
             disabled={saving}
-            validate={isValidCedula}
-            errorMessage="Cédula inválida"
+            value={form.cedula}
+            onChangeText={(v)=>setF('cedula',v.replace(/[^0-9]/g,''))}
+            placeholder="Opcional"
           />
-        </View>
 
-        <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>Información no editable:</Text>
-          <Text style={styles.infoText}>• Nombre completo</Text>
-          <Text style={styles.infoText}>• Contraseña</Text>
-          <Text style={styles.infoHint}>Para cambiar estos datos, contacta soporte.</Text>
-        </View>
+          {/* info fija */}
+          <View style={styles.box}>
+            <Text style={styles.boxT}>Información no editable:</Text>
+            <Text style={styles.boxI}>• Nombre completo</Text>
+            <Text style={styles.boxI}>• Contraseña</Text>
+            <Text style={styles.boxH}>Para cambiar estos datos, contacta soporte.</Text>
+          </View>
 
-        <CustomButton
-          label="Guardar Cambios"
-          type="primary"
-          icon="content-save"
-          onPress={handleSave}
-          loading={saving}
-          disabled={saving}
-          fullWidth
-          style={styles.saveButton}
-        />
-      </ScrollView>
-      
-      <Snackbar 
-        visible={snackbarVisible} 
-        onDismiss={() => setSnackbarVisible(false)} 
-        duration={3000}
-        style={{ backgroundColor: theme.colors.error }}
-      >
+          <CustomButton
+            label="Guardar cambios"
+            icon="content-save"
+            fullWidth
+            onPress={handleSave}
+            loading={saving}
+            disabled={saving}
+          />
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <Snackbar visible={snack} onDismiss={()=>setSnack(false)}
+                duration={3000} style={{backgroundColor:theme.colors.error}}>
         {error}
       </Snackbar>
     </SafeAreaView>
   );
-};
+}
 
+/* ---------- estilos ---------- */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 20,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 30,
-  },
-  backButton: {
-    alignSelf: 'flex-start',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  imageSection: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  imageContainer: {
-    position: 'relative',
-    marginBottom: 8,
-  },
-  profileImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-  },
-  placeholderImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#ddd',
-    borderStyle: 'dashed',
-  },
-  imageOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: '#FF4081',
-    borderRadius: 20,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imageHint: {
-    fontSize: 14,
-    color: '#666',
-    fontStyle: 'italic',
-  },
-  formSection: {
-    marginBottom: 30,
-  },
-  infoSection: {
-    backgroundColor: '#f9f9f9',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 30,
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#333',
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  infoHint: {
-    fontSize: 12,
-    color: '#999',
-    fontStyle: 'italic',
-    marginTop: 8,
-  },
-  saveButton: {
-    marginTop: 20,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#666',
-  },
-});
+  container:{ flex:1, backgroundColor:'#fff' },
+  center:{ flex:1, justifyContent:'center', alignItems:'center' },
+  header:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:30 },
+  title:{ fontSize:20, fontWeight:'bold' },
 
-export default EditProfileScreen;
+  imgWrap:{ alignSelf:'center', marginBottom:10, position:'relative' },
+  img:{ width:120, height:120, borderRadius:60 },
+  imgPlaceholder:{ width:120, height:120, borderRadius:60, backgroundColor:'#f0f0f0',
+                   justifyContent:'center', alignItems:'center', borderWidth:2, borderColor:'#ddd',
+                   borderStyle:'dashed' },
+  imgOverlay:{ position:'absolute', bottom:0, right:0, backgroundColor:'#FF4081',
+               width:40, height:40, borderRadius:20, justifyContent:'center', alignItems:'center' },
+  imgHint:{ textAlign:'center', fontSize:12, color:'#666', marginBottom:20 },
+
+  box:{ backgroundColor:'#f9f9f9', padding:16, borderRadius:8, marginVertical:30 },
+  boxT:{ fontWeight:'bold', marginBottom:8, color:'#333' },
+  boxI:{ color:'#666', marginBottom:4 },
+  boxH:{ color:'#999', fontStyle:'italic', marginTop:8 },
+});

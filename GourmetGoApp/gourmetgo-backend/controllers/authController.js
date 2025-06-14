@@ -10,31 +10,40 @@ exports.register = async (req, res) => {
   try {
     const {
       rol, nombre, email, password,
-      telefono = null, cedula = null, preferencias = null, // usuario
-      contacto = null, ubicacion = null, tipoCocina = null // chef / restaurante
+      telefono = null, cedula = null, preferencias = null,      // usuario
+      contacto = null, ubicacion = null, tipoCocina = null,     // chef / restaurante
+      fotoUrl  = null,                                          // todos
     } = req.body;
 
-    /* hash de contraseña */
     const hash = await bcrypt.hash(password, 10);
 
-    /* Inserción general – los valores inexistentes van como NULL */
+    /*  Convierte arrays JS → JSON para columnas jsonb  */
+    const prefsJSON = preferencias ? JSON.stringify(preferencias) : null;
+    const cocinaJSON= tipoCocina   ? JSON.stringify(tipoCocina)   : null;
+
     const { rows } = await pool.query(
       `INSERT INTO usuarios
-       (rol, nombre, email, password_hash,
-        telefono, cedula, preferencias,
-        contacto, ubicacion, tipo_cocina)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         (rol, nombre, email, password_hash,
+          telefono, cedula, preferencias,
+          contacto, ubicacion, tipo_cocina,
+          foto_url)
+       VALUES
+         ($1,$2,$3,$4,
+          $5,$6,$7,
+          $8,$9,$10,
+          $11)
        RETURNING id, rol, nombre, email`,
       [
         rol, nombre, email, hash,
-        telefono, cedula, preferencias,
-        contacto, ubicacion, tipoCocina
-      ],
+        telefono, cedula, prefsJSON,
+        contacto, ubicacion, cocinaJSON,
+        fotoUrl,
+      ]
     );
 
     res.status(201).json(rows[0]);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: err.detail || err.message });
   }
 };
 

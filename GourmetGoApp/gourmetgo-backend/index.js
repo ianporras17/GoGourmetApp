@@ -15,6 +15,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/send-mail', require('./routes/sendMail'));
 app.use('/api/reservations', require('./routes/reservations'));
 app.use('/api/profile', require('./routes/profile'));
+app.use('/api/ratings', require('./routes/ratings'));
 
 app.get('/', (req, res) => {
   res.send('GourmetGo API funcionando 🍽️');

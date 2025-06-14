@@ -1,9 +1,13 @@
-// gourmetgo-backend/routes/reservations.js
 const router = require('express').Router();
 const auth   = require('../middlewares/auth');
-const { byExperience } = require('../controllers/reservationsController');
+const {
+  byExperience,
+  listMine,
+  createReservation   // ← nuevo
+} = require('../controllers/reservationsController');
 
-/* todas requieren token (solo chefs) */
-router.get('/experience/:id', auth, byExperience);
+router.get('/experience/:id', auth, byExperience); // chefs
+router.get('/mine',           auth, listMine);     // usuarios
+router.post('/',              auth, createReservation); // ← NUEVO
 
 module.exports = router;

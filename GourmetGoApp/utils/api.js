@@ -132,3 +132,33 @@ export const updateMyProfile = (token, data) => {
     }),
   }).then(r => r.json());
 };
+
+
+export const getPublicProfile = (id) =>
+  fetch(`${BASE_URL}/profile/${id}`).then(r => r.json());
+
+export const listMyReservations = (token) =>
+  fetch(`${BASE_URL}/reservations/mine`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then(r => r.json());
+
+export const createRatingApi = (token, data) =>
+  fetch(`${BASE_URL}/ratings`, {
+    method : 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization : `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  }).then(r => r.json());
+
+
+export const createReservationApi = (token, data) =>
+  fetch(`${BASE_URL}/reservations`, {
+    method : 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization : `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  }).then(r => r.json());

@@ -1,353 +1,249 @@
+// screens/user/ExperienceDetailScreen.js
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, ScrollView, Image, ActivityIndicator, RefreshControl, TouchableOpacity, Linking } from 'react-native';
-import { Text, useTheme, Chip, Divider, Button as PaperButton, IconButton, Surface, Avatar } from 'react-native-paper';
+import {
+  StyleSheet, View, ScrollView, Image, ActivityIndicator,
+  RefreshControl, Linking, Platform
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
-import Swiper from 'react-native-swiper'; // Para la galería de imágenes
+import {
+  Text, Chip, Divider, Surface, Avatar, IconButton
+} from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import Swiper from 'react-native-swiper';
 
 import CustomButton from '../../components/CustomButton';
-import { getExperienceById, getUserProfile } from '../../firebase/db'; // Asumiendo que tienes esta función
-import { formatPrice, formatDate, formatDateTime } from '../../utils/helpers';
+import { getExperience, getPublicProfile } from '../../utils/api';
+import { formatPrice, formatDateTime } from '../../utils/helpers';
 
-const ExperienceDetailScreen = ({ route, navigation }) => {
-  const theme = useTheme();
+export default function ExperienceDetailScreen({ route, navigation }) {
   const { experienceId } = route.params;
 
-  const [experience, setExperience] = useState(null);
-  const [creatorProfile, setCreatorProfile] = useState(null);
+  const [exp, setExp]         = useState(null);
+  const [creator, setCreator] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError]     = useState(null);
 
-  const fetchExperienceDetails = async () => {
+  const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: fetchError } = await getExperienceById(experienceId);
-      if (fetchError) {
-        setError(fetchError);
-        setExperience(null);
-      } else if (data) {
-        setExperience(data);
-        if (data.createdBy) {
-          const { data: profile, error: profileError } = await getUserProfile(data.createdBy);
-          if (profile) setCreatorProfile(profile);
-        }
-      } else {
-        setError('Experiencia no encontrada.');
+      const data = await getExperience(experienceId);
+      if (data.error) throw new Error(data.error);
+      setExp(data);
+
+      // Perfil público opcional
+      if (data.created_by) {
+        const prof = await getPublicProfile(data.created_by);
+        if (!prof.error) setCreator(prof);
       }
     } catch (e) {
       setError(e.message);
-      setExperience(null);
+      setExp(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => {
-    fetchExperienceDetails();
-  }, [experienceId]);
+  useEffect(() => { loadData(); }, [experienceId]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchExperienceDetails();
+    loadData();
   }, [experienceId]);
-
-  const openMap = () => {
-    if (experience && experience.location && experience.location.latitude && experience.location.longitude) {
-        const scheme = Platform.OS === 'ios' ? 'maps:' : 'geo:';
-        const url = `${scheme}${experience.location.latitude},${experience.location.longitude}?q=${experience.location.address || 'Ubicación del evento'}`;
-        Linking.openURL(url);
-    } else {
-        alert('Ubicación no disponible.')
-    }
-  };
 
   if (loading && !refreshing) {
     return (
-      <View style={styles.centered}><ActivityIndicator animating={true} size="large" color={theme.colors.primary} /></View>
+      <View style={styles.center}>
+        <ActivityIndicator size="large" />
+      </View>
     );
   }
-
-  if (error && !experience) {
+  if (error && !exp) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <MaterialCommunityIcons name="alert-circle-outline" size={50} color={theme.colors.error} />
+      <SafeAreaView style={styles.center}>
+        <MaterialCommunityIcons name="alert-circle-outline" size={50} color="red" />
         <Text style={styles.errorText}>{error}</Text>
-        <CustomButton label="Volver a Explorar" onPress={() => navigation.goBack()} type="primary" />
+        <CustomButton label="Volver" onPress={() => navigation.goBack()} />
       </SafeAreaView>
     );
   }
-  
-  if (!experience) {
-      return (
-        <SafeAreaView style={styles.centered}>
-            <Text>No se pudo cargar la experiencia.</Text>
-             <CustomButton label="Volver a Explorar" onPress={() => navigation.goBack()} type="primary" />
-        </SafeAreaView>
-      )
+  if (!exp) {
+    return (
+      <SafeAreaView style={styles.center}>
+        <Text>No se pudo cargar la experiencia.</Text>
+        <CustomButton label="Volver" onPress={() => navigation.goBack()} />
+      </SafeAreaView>
+    );
   }
 
-  const { 
-    name,
-    images,
-    description,
-    city,
-    location, // Objeto con address, latitude, longitude
-    menu, // Puede ser texto o URL de imagen
-    price,
-    totalCapacity,
-    currentCapacity,
-    requirements,
-    date, // Timestamp
-    eventType,
-    // createdBy (ya usado para creatorProfile)
-  } = experience;
+  // Destructuring
+  const {
+    nombre,
+    descripcion,
+    ciudad,
+    precio,
+    capacidad,
+    cupos_disponibles,
+    fecha_hora,
+    event_type,
+    images = [],
+    location_url
+  } = exp;
 
-  const experienceDate = date ? (date.toDate ? date.toDate() : new Date(date)) : new Date();
-  const canReserve = currentCapacity > 0 && experienceDate >= new Date();
+  const eventDate = new Date(fecha_hora);
+  const now = new Date();
+  const hasEnded = eventDate < now;
+  const canReserve = !hasEnded && cupos_disponibles > 0;
+  const canRate = hasEnded && exp.user_has_reserved && !exp.user_has_rated;
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView 
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />}
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 90 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <View style={styles.headerActionsContainer}>
-            <IconButton icon="arrow-left" size={28} onPress={() => navigation.goBack()} style={styles.backButton} />
-            {/* Podrías añadir un botón de compartir o favorito aquí */}
-        </View>
+        {/* Back */}
+        <IconButton
+          icon="arrow-left"
+          size={28}
+          style={styles.back}
+          onPress={() => navigation.goBack()}
+        />
 
-        {images && images.length > 0 && (
-          <Swiper style={styles.swiper} showsButtons={images.length > 1} loop={false} dotColor={theme.colors.disabled} activeDotColor={theme.colors.primary} paginationStyle={styles.swiperPagination}>
-            {images.map((img, index) => (
-              <View key={index} style={styles.slide}>
-                <Image source={{ uri: img }} style={styles.galleryImage} resizeMode="cover" />
-              </View>
+        {/* Gallery */}
+        {images.length > 0 && (
+          <Swiper style={{ height: 250 }} loop={false}>
+            {images.map((uri, i) => (
+              <Image key={i} source={{ uri }} style={styles.gallery} />
             ))}
           </Swiper>
         )}
 
-        <View style={styles.contentContainer}>
-          <Text style={[styles.title, {color: theme.colors.onBackground}]}>{name}</Text>
-          
-          {creatorProfile && (
-            <TouchableOpacity onPress={() => {/* Navegar al perfil del chef/restaurante */}}>
-                <Surface style={styles.creatorCard}>
-                    <Avatar.Image size={40} source={{ uri: creatorProfile.photoURL || 'https://via.placeholder.com/50' }} />
-                    <View style={styles.creatorInfo}>
-                        <Text style={styles.creatorName}>{creatorProfile.nombreEstablecimiento || creatorProfile.nombre}</Text>
-                        <Text style={styles.creatorType}>{creatorProfile.userType === 'chef' ? 'Chef' : 'Restaurante'}</Text>
-                    </View>
-                </Surface>
-            </TouchableOpacity>
+        <View style={styles.content}>
+          <Text style={styles.title}>{nombre}</Text>
+
+          {/* Creador */}
+          {creator && (
+            <Surface style={styles.creatorCard}>
+              <Avatar.Image
+                size={40}
+                source={{ uri: creator.foto_url || 'https://via.placeholder.com/50' }}
+              />
+              <View style={{ marginLeft: 10 }}>
+                <Text style={styles.creatorName}>{creator.nombre}</Text>
+                <Text style={styles.creatorType}>
+                  {creator.rol === 'chef' ? 'Chef' : 'Restaurante'}
+                </Text>
+              </View>
+            </Surface>
           )}
 
-          <View style={styles.infoChipContainer}>
-            <Chip icon="map-marker" mode="outlined" style={styles.chip}>{city}</Chip>
-            <Chip icon="silverware-fork-knife" mode="outlined" style={styles.chip}>{eventType}</Chip>
-            <Chip icon="cash" mode="outlined" style={styles.chip}>{formatPrice(price)}</Chip>
+          {/* Chips */}
+          <View style={styles.chips}>
+            <Chip icon="map-marker" style={styles.chip}>{ciudad}</Chip>
+            <Chip icon="silverware-fork-knife" style={styles.chip}>{event_type}</Chip>
+            <Chip icon="cash" style={styles.chip}>{formatPrice(precio)}</Chip>
           </View>
 
-          <Divider style={styles.divider} />
+          <Divider style={{ marginVertical: 15 }} />
 
+          {/* Descripción */}
           <Section title="Descripción">
-            <Text style={styles.text}>{description || 'No hay descripción disponible.'}</Text>
+            <Text style={styles.text}>{descripcion || 'Sin descripción.'}</Text>
           </Section>
 
-          <Section title="Fecha y Hora">
-            <Text style={styles.text}>{formatDateTime(experienceDate)}</Text>
+          {/* Fecha y hora */}
+          <Section title="Fecha y hora">
+            <Text style={styles.text}>{formatDateTime(eventDate)}</Text>
           </Section>
 
-          {menu && (
-            <Section title="Menú">
-              {isValidURL(menu) ? (
-                <Image source={{ uri: menu }} style={styles.menuImage} resizeMode="contain" />
-              ) : (
-                <Text style={styles.text}>{menu}</Text>
-              )}
-            </Section>
-          )}
-          
+          {/* Ubicación */}
           <Section title="Ubicación">
-            <Text style={styles.text}>{location?.address || 'Ubicación no detallada.'}</Text>
-            {location?.latitude && location?.longitude && (
-                <CustomButton onPress={openMap} icon="map-search-outline" type="outline" style={{marginTop: 10}}>Ver en Mapa</CustomButton>
+            <Text style={styles.text}>{location_url || 'Ubicación no detallada.'}</Text>
+            {location_url && (
+              <CustomButton
+                type="outline"
+                icon="map-search-outline"
+                onPress={() => Linking.openURL(location_url)}
+                style={{ marginTop: 8 }}
+              >
+                Ver en mapa
+              </CustomButton>
             )}
           </Section>
 
+          {/* Capacidad */}
           <Section title="Capacidad">
-            <Text style={styles.text}>Espacios disponibles: {currentCapacity} / {totalCapacity}</Text>
-            {currentCapacity === 0 && <Text style={[styles.text, {color: theme.colors.error}]}>¡Agotado!</Text>}
+            <Text style={styles.text}>
+              Disponibles: {cupos_disponibles} / {capacidad}
+            </Text>
+            {cupos_disponibles === 0 && (
+              <Text style={[styles.text, { color: 'red' }]}>¡Agotado!</Text>
+            )}
           </Section>
-
-          {requirements && requirements.length > 0 && (
-            <Section title="Requisitos">
-              {requirements.map((req, index) => (
-                <View key={index} style={styles.listItem}>
-                    <MaterialCommunityIcons name="check-circle-outline" size={18} color={theme.colors.primary} style={{marginRight: 5}}/>
-                    <Text style={styles.text}>{req}</Text>
-                </View>
-              ))}
-            </Section>
-          )}
         </View>
       </ScrollView>
-      
-      {canReserve && (
-        <View style={styles.fabContainer}>
-          <CustomButton 
-            label={`Reservar (${formatPrice(price)})`}
-            type="primary" 
-            icon="calendar-check"
-            iconType="material-community"
-            onPress={() => navigation.navigate('Booking', { experienceId, experienceName: name, pricePerPerson: price })}
+
+      {/* Barra inferior */}
+      <View style={styles.bottomBar}>
+        {canReserve && (
+          <CustomButton
+            label={`Reservar (${formatPrice(precio)})`}
             fullWidth
+            icon="calendar-check"
+            onPress={() =>
+              navigation.navigate('Booking', {
+                experienceId,
+                experienceName: nombre,
+                pricePerPerson: precio
+              })
+            }
           />
-        </View>
-      )}
+        )}
+        {canRate && (
+          <CustomButton
+            label="Calificar experiencia"
+            fullWidth
+            icon="star"
+            onPress={() =>
+              navigation.navigate('RateExperience', {
+                experienceId,
+                experienceName: nombre
+              })
+            }
+            style={{ marginTop: canReserve ? 8 : 0 }}
+          />
+        )}
+      </View>
     </SafeAreaView>
   );
-};
+}
 
-const Section = ({ title, children }) => (
-  <View style={styles.sectionContainer}>
-    <Text style={styles.sectionTitle}>{title}</Text>
-    {children}
-  </View>
-);
-
-// Helper para validar si una cadena es una URL (simple)
-const isValidURL = (string) => {
-  try {
-    new URL(string);
-    return true;
-  } catch (_) {
-    return false;  
-  }
+function Section({ title, children }) {
+  return (
+    <View style={{ marginBottom: 20 }}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {children}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: 'red',
-    textAlign: 'center',
-    marginBottom: 15,
-  },
-  headerActionsContainer: {
-      position: 'absolute',
-      top: Platform.OS === 'ios' ? 15 : 10, // Ajuste para status bar en iOS si no se usa SafeAreaView arriba
-      left: 10,
-      zIndex: 10,
-      flexDirection: 'row',
-  },
-  backButton: {
-      backgroundColor: 'rgba(0,0,0,0.3)',
-      borderRadius: 20,
-  },
-  scrollContent: {
-    paddingBottom: 80, // Espacio para el botón FAB
-  },
-  swiper: {
-    height: 250, // Altura de la galería
-  },
-  swiperPagination: {
-    bottom: 10,
-  },
-  slide: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#e0e0e0',
-  },
-  galleryImage: {
-    width: '100%',
-    height: '100%',
-  },
-  contentContainer: {
-    padding: 15,
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    marginBottom: 10,
-  },
-  creatorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 15,
-    elevation: 2,
-  },
-  creatorInfo: {
-    marginLeft: 10,
-  },
-  creatorName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  creatorType: {
-    fontSize: 12,
-    color: 'gray',
-  },
-  infoChipContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 10,
-  },
-  chip: {
-    margin: 4,
-  },
-  divider: {
-    marginVertical: 15,
-  },
-  sectionContainer: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 10,
-  },
-  text: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#424242',
-  },
-  menuImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 8,
-    marginTop: 5,
-  },
-  listItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 5,
-  },
-  fabContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 15,
-    backgroundColor: 'white', // O el color de fondo del tema
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-  },
+  container:    { flex: 1, backgroundColor: '#fff' },
+  center:       { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  errorText:    { marginVertical: 10, color: 'red', textAlign: 'center' },
+  back:         { position: 'absolute', top: Platform.OS === 'ios' ? 15 : 10, left: 10, zIndex: 10, backgroundColor: 'rgba(0,0,0,0.3)' },
+  gallery:      { width: '100%', height: '100%' },
+  content:      { padding: 15 },
+  title:        { fontSize: 24, fontWeight: 'bold', marginBottom: 10 },
+  creatorCard:  { flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 8, marginBottom: 15, elevation: 2 },
+  creatorName:  { fontWeight: 'bold' },
+  creatorType:  { fontSize: 12, color: 'gray' },
+  chips:        { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 },
+  chip:         { margin: 4 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 6 },
+  text:         { fontSize: 15, lineHeight: 22 },
+  bottomBar:    { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 15, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e0e0e0' },
 });
-
-export default ExperienceDetailScreen; 
